@@ -57,8 +57,16 @@ serves `/healthz`, and shuts down cleanly), and pass `make check` + an empty
   5. CI runs lint + test + a Docker build and is green.
 
 Plans:
+**Wave 1**
+
 - [ ] 01-01-PLAN.md — Project toolchain scaffold: pyproject.toml (pinned deps, ruff, pytest), uv.lock, Makefile, alembic.ini, migrations/provisioning tree, .env.example, .gitignore, .dockerignore
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 01-02-PLAN.md — Worker source + test suite: settings.py, infrastructure/*.py (real boot path), __main__.py, main.py (TaskGroup + SIGTERM), placeholder module tree, all unit tests
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 01-03-PLAN.md — Container + CI: Dockerfile (two-stage, uv, non-root), docker-compose.yml (external platform-net), .github/workflows/ci.yml (lint + test + build-only)
 
 ### Phase 2: Event consumption & idempotency
@@ -130,11 +138,14 @@ completes:
 - **Coolify spike** — prototype the riskiest operations (volumes, networking,
   per-instance Postgres, suspension) against the live Coolify API (PRD §16 #1
   risk).
+
 - **`CoolifyAdapter` + Odoo stack template** — the real deployment path behind
   the unchanged `DeploymentAdapter` port; the Odoo base image (with the
   `platform_entitlements` plugin) build + registry.
+
 - **Per-instance bearer token + served `enforcement_snapshot`** — mint/rotate
   the token, serve the snapshot to the live Odoo plugin via platform-api's
   `plugin_api` (coordinate the exact token-validation mechanism).
+
 - **`SmtpNotificationTransport`** and **operator-triggered retry** (needs a
   platform-api → worker signalling channel).

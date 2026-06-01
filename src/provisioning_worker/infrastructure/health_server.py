@@ -1,7 +1,7 @@
 """aiohttp health server — serves GET /healthz on HEALTH_PORT.
 
 Runs as one of the four TaskGroup concerns. Uses AppRunner + TCPSite
-so it does not block the event loop (unlike web.run_app()).
+so it does not block the event loop (unlike the blocking helper).
 """
 
 from typing import TYPE_CHECKING

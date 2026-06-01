@@ -24,14 +24,14 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
   format/check/migrate/revision/psql/infra-up), ruff + pytest config,
   `.env.example`, `.gitignore`, `Dockerfile`, and CI (lint + test + build).
   `make check` and `make test` pass on an empty suite.
-- [ ] **SCAF-02**: `python -m provisioning_worker` (`make run`) boots the four
+- [x] **SCAF-02**: `python -m provisioning_worker` (`make run`) boots the four
   concurrent concerns on one asyncio loop — Streams consumer, convergence +
   Taskiq, outbox relay, `/healthz` — logs a structured `starting` line, and
   drains cleanly on SIGTERM. (`docs/architecture.md` §Process model.)
-- [ ] **SCAF-03**: A typed `Settings` (pydantic-settings) validates every env
+- [x] **SCAF-03**: A typed `Settings` (pydantic-settings) validates every env
   var at startup and fails fast on a missing one; `.env.example` lists each var
   with the milestone-1 defaults (`docs/local-development.md`).
-- [ ] **SCAF-04**: `GET /healthz` (aiohttp, `HEALTH_PORT`, default 8001) returns
+- [x] **SCAF-04**: `GET /healthz` (aiohttp, `HEALTH_PORT`, default 8001) returns
   200 `{"status":"ok"}`.
 - [x] **SCAF-05**: A single Alembic tree for the `provisioning` schema
   (`alembic.ini` section `provisioning`, `version_table_schema=provisioning`)
@@ -40,7 +40,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
 
 ### Observability
 
-- [ ] **OBS-01**: structlog emits JSON outside dev; handlers bind
+- [x] **OBS-01**: structlog emits JSON outside dev; handlers bind
   `envelope_id` / `subscription_id` / `instance_id` / `correlation_id` via
   `bind_contextvars`; an OTel bootstrap is in place (OTLP optional). Consumer
   lag, convergence duration, and outbox backlog are exposed as metrics.

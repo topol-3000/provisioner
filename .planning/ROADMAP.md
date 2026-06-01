@@ -47,7 +47,7 @@ serves `/healthz`, and shuts down cleanly), and pass `make check` + an empty
 **Mode:** mvp
 **Depends on**: `platform-infra` running (Postgres + Valkey).
 **Requirements**: SCAF-01, SCAF-02, SCAF-03, SCAF-04, SCAF-05, OBS-01
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 **Success Criteria** (what must be TRUE):
 
   1. `uv sync --frozen --extra dev` installs the pinned stack from a committed `uv.lock`; `make check` (ruff check + format --check) passes.
@@ -63,7 +63,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — Worker source + test suite: settings.py, infrastructure/*.py (real boot path), __main__.py, main.py (TaskGroup + SIGTERM), placeholder module tree, all unit tests
+- [x] 01-02-PLAN.md — Worker source + test suite: settings.py, infrastructure/*.py (real boot path), __main__.py, main.py (TaskGroup + SIGTERM), placeholder module tree, all unit tests
 
 **Wave 3** *(blocked on Wave 2 completion)*
 

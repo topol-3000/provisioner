@@ -47,6 +47,7 @@ serves `/healthz`, and shuts down cleanly), and pass `make check` + an empty
 **Mode:** mvp
 **Depends on**: `platform-infra` running (Postgres + Valkey).
 **Requirements**: SCAF-01, SCAF-02, SCAF-03, SCAF-04, SCAF-05, OBS-01
+**Plans:** 3 plans
 **Success Criteria** (what must be TRUE):
 
   1. `uv sync --frozen --extra dev` installs the pinned stack from a committed `uv.lock`; `make check` (ruff check + format --check) passes.
@@ -54,6 +55,11 @@ serves `/healthz`, and shuts down cleanly), and pass `make check` + an empty
   3. The four concerns start (consumer / convergence+Taskiq / outbox relay / health) even though handlers are not implemented yet — each logs that it started.
   4. `make migrate` succeeds against the empty `provisioning` schema; `make revision name="..."` emits a revision with no `from __future__ import annotations`.
   5. CI runs lint + test + a Docker build and is green.
+
+Plans:
+- [ ] 01-01-PLAN.md — Project toolchain scaffold: pyproject.toml (pinned deps, ruff, pytest), uv.lock, Makefile, alembic.ini, migrations/provisioning tree, .env.example, .gitignore, .dockerignore
+- [ ] 01-02-PLAN.md — Worker source + test suite: settings.py, infrastructure/*.py (real boot path), __main__.py, main.py (TaskGroup + SIGTERM), placeholder module tree, all unit tests
+- [ ] 01-03-PLAN.md — Container + CI: Dockerfile (two-stage, uv, non-root), docker-compose.yml (external platform-net), .github/workflows/ci.yml (lint + test + build-only)
 
 ### Phase 2: Event consumption & idempotency
 

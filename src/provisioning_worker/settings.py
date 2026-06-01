@@ -38,17 +38,14 @@ class Settings(BaseSettings):
     # Async DSN for the application; sync DSN for Alembic. Both target the
     # same Postgres cluster — see docs/architecture.md §Migrations.
     database_url: PostgresDsn = Field(
-        default="postgresql+psycopg://platform:platform_dev_password@localhost:5432/platform",
         description="Async SQLAlchemy DSN (psycopg driver).",
     )
     database_url_sync: PostgresDsn = Field(
-        default="postgresql+psycopg://platform:platform_dev_password@localhost:5432/platform",
         description="Sync SQLAlchemy DSN (psycopg) used by Alembic.",
     )
 
     # ----- Valkey (event bus + task broker) -----
     valkey_url: RedisDsn = Field(
-        default="redis://localhost:6379/0",
         description="Valkey URL — Redis protocol. Used by the streams consumer and Taskiq.",
     )
 

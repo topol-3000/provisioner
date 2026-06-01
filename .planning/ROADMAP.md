@@ -47,7 +47,7 @@ serves `/healthz`, and shuts down cleanly), and pass `make check` + an empty
 **Mode:** mvp
 **Depends on**: `platform-infra` running (Postgres + Valkey).
 **Requirements**: SCAF-01, SCAF-02, SCAF-03, SCAF-04, SCAF-05, OBS-01
-**Plans:** 3 plans
+**Plans:** 1/3 plans executed
 **Success Criteria** (what must be TRUE):
 
   1. `uv sync --frozen --extra dev` installs the pinned stack from a committed `uv.lock`; `make check` (ruff check + format --check) passes.
@@ -59,7 +59,7 @@ serves `/healthz`, and shuts down cleanly), and pass `make check` + an empty
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Project toolchain scaffold: pyproject.toml (pinned deps, ruff, pytest), uv.lock, Makefile, alembic.ini, migrations/provisioning tree, .env.example, .gitignore, .dockerignore
+- [x] 01-01-PLAN.md — Project toolchain scaffold: pyproject.toml (pinned deps, ruff, pytest), uv.lock, Makefile, alembic.ini, migrations/provisioning tree, .env.example, .gitignore, .dockerignore
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

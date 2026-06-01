@@ -18,7 +18,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
 
 ### Scaffold & runtime
 
-- [ ] **SCAF-01**: The repo builds and checks clean — `pyproject.toml` with the
+- [x] **SCAF-01**: The repo builds and checks clean — `pyproject.toml` with the
   pinned stack (per `docs/conventions.md` / `CLAUDE.md` §3), committed
   `uv.lock`, `Makefile` (help/dev/run/test/test-integration/lint/lint-fix/
   format/check/migrate/revision/psql/infra-up), ruff + pytest config,
@@ -33,7 +33,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
   with the milestone-1 defaults (`docs/local-development.md`).
 - [ ] **SCAF-04**: `GET /healthz` (aiohttp, `HEALTH_PORT`, default 8001) returns
   200 `{"status":"ok"}`.
-- [ ] **SCAF-05**: A single Alembic tree for the `provisioning` schema
+- [x] **SCAF-05**: A single Alembic tree for the `provisioning` schema
   (`alembic.ini` section `provisioning`, `version_table_schema=provisioning`)
   is wired; `make migrate` runs clean against the empty schema; `make revision
   name="..."` emits a clean revision (no `from __future__ import annotations`).

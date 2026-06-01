@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
-status: ready_to_plan
-last_updated: 2026-06-01T12:00:00.000Z
+status: planning
+last_updated: "2026-06-01T13:34:41.756Z"
 last_activity: 2026-06-01
 progress:
   total_phases: 5
@@ -11,7 +11,6 @@ progress:
   total_plans: 0
   completed_plans: 0
   percent: 0
-stopped_at: Project initialized from docs/ — ready to plan Phase 1 (repo scaffold & worker skeleton)
 ---
 
 # Project State
@@ -42,8 +41,10 @@ Progress: [          ] 0%
   `architecture.md`, `events.md`, `deployment-adapter.md`, `conventions.md`,
   `local-development.md`, `python-style.md`, plus `CLAUDE.md`. Roadmap phases
   reference them rather than restating.
+
 - `.planning/codebase/` maps are not yet generated — run `/gsd-map-codebase`
   after Phase 1 lands real source.
+
 - Milestone 2 (Coolify spike + `CoolifyAdapter`, Odoo stack template, per-instance
   token, served `enforcement_snapshot`, SMTP, operator retry) is a separate
   milestone, captured in `.planning/seeds/` and ROADMAP "Beyond milestone 1".

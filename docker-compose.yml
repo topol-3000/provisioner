@@ -1,0 +1,57 @@
+# provisioner / docker-compose.yml
+# ==================================
+# Runs provisioning-worker against the shared `platform-net` network created
+# by ../platform-infra. Bring the infra stack up first:
+#
+#   (cd ../platform-infra && docker compose up -d)
+#   docker compose up --build
+#
+# In-network DNS names override the localhost defaults from .env so the
+# container can reach Postgres / Valkey by their service names.
+#
+# Note: this worker uses NO Keycloak realm — no KEYCLOAK_BASE_URL override.
+
+name: provisioning-worker
+
+services:
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: provisioning-worker:dev
+    container_name: provisioning-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Override the localhost URLs from .env — inside platform-net the
+      # infra services are reachable by their container names.
+      DATABASE_URL: postgresql+psycopg://platform:platform_dev_password@platform-postgres:5432/platform
+      DATABASE_URL_SYNC: postgresql+psycopg://platform:platform_dev_password@platform-postgres:5432/platform
+      VALKEY_URL: redis://platform-valkey:6379/0
+      # No KEYCLOAK_BASE_URL — this worker uses no Keycloak realm
+    ports:
+      - "${HEALTH_HOST_PORT:-8001}:8001"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=2).status == 200 else 1)"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - platform-net
+
+# ---------------------------------------------------------------------
+# Network — attach to the bridge created by ../platform-infra.
+# Declared `external` so this compose project never tries to create or
+# delete it; platform-infra owns its lifecycle.
+# ---------------------------------------------------------------------
+networks:
+  platform-net:
+    name: platform-net
+    external: true

@@ -1,0 +1,142 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "provisioning-worker"
+version = "0.1.0"
+description = "Provisioning worker for the Odoo Entitlements SaaS Platform"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+authors = [{ name = "Yevhenii" }]
+
+# Version pins follow CLAUDE.md §3. Compatible-release (`~=`) is used so patch
+# bumps land automatically; major/minor bumps are deliberate.
+dependencies = [
+    # Validation / settings
+    "pydantic==2.13.*",
+    "pydantic-settings==2.7.*",
+
+    # ORM + migrations
+    "sqlalchemy[asyncio]==2.0.*",
+    "alembic==1.18.*",
+    "psycopg[binary]==3.3.*",          # async + sync driver (app and Alembic)
+
+    # Background jobs / event bus
+    "taskiq==0.12.*",
+    "taskiq-redis==1.2.*",             # protocol-compatible with Valkey
+
+    # Unified redis.asyncio client — Valkey Streams consumer + publisher
+    "redis>=5",
+
+    # HTTP client (/healthz server + M2 Coolify client)
+    "aiohttp==3.*",
+
+    # ULID generation (EventEnvelope.id per docs/events.md §Envelope)
+    "python-ulid==3.1.*",
+
+    # Observability
+    "structlog==25.*",
+    "opentelemetry-api==1.41.*",
+    "opentelemetry-sdk==1.41.*",
+    "opentelemetry-instrumentation-psycopg==0.62b0",
+    "opentelemetry-instrumentation-redis==0.62b0",
+    "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
+]
+
+# No [project.scripts] — entrypoint is `python -m provisioning_worker`
+
+[project.optional-dependencies]
+# `uv sync --extra dev` installs these in addition.
+dev = [
+    "pytest==9.*",
+    "pytest-asyncio==1.3.*",
+    "pytest-cov==6.*",
+    "testcontainers[postgres,redis]==4.14.*",
+    "ruff==0.15.*",
+]
+
+# -----------------------------------------------------------------------
+# Hatchling build config
+# -----------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src/provisioning_worker"]
+
+# -----------------------------------------------------------------------
+# Ruff (lint + format). Mirrors platform-api exactly.
+# -----------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+extend-exclude = ["migrations", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",     # pycodestyle
+    "F",          # pyflakes
+    "I",          # isort
+    "B",          # flake8-bugbear
+    "C4",         # comprehensions
+    "UP",         # pyupgrade
+    "RUF",        # ruff-specific
+    "ASYNC",      # async correctness (e.g. blocking calls in async functions)
+    "S",          # security (bandit-equivalent)
+    "PT",         # pytest style
+    "SIM",        # simplifications
+    "TCH",        # type-checking-only imports
+    "PL",         # pylint subset
+    "ERA",        # eradicate commented-out code
+]
+ignore = [
+    "PLR0913",    # too-many-arguments — sometimes necessary in worker wiring
+    "S101",       # assert in tests is fine
+    "ERA001",     # commented-out code is sometimes deliberate in scaffold
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["provisioning_worker"]
+force-single-line = false
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# -----------------------------------------------------------------------
+# pytest
+# -----------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--showlocals",
+]
+asyncio_mode = "auto"
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::DeprecationWarning:google.*",
+    "ignore::DeprecationWarning:testcontainers.*",
+    "ignore::DeprecationWarning:pytest_asyncio.*",
+    "ignore::DeprecationWarning:aiohttp.*",
+]
+markers = [
+    "integration: Tests requiring real Postgres and Valkey (testcontainers).",
+    "slow: Tests that take >2 seconds.",
+]
+
+[tool.coverage.run]
+source = ["src/provisioning_worker"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

@@ -142,3 +142,15 @@ configured in M1. Build proves the image builds from committed source; nothing m
 - .github/workflows/ci.yml: FOUND
 - 69d5036: FOUND in git log
 - 6f4e508: FOUND in git log
+
+## Human-Verify Checkpoint (Task 3) — APPROVED
+
+Resolved 2026-06-01 by user ("Approve & continue"). Accepted on build-time evidence:
+
+- Orchestrator re-inspected the built image: `Entrypoint=[python -m provisioning_worker]`,
+  `User=platform` (non-root), `ExposedPorts={8001/tcp}`, healthcheck hits `/healthz` on 8001.
+- `docker build` exit 0; `make check` + `make test` (10 passed) green post-Wave-3.
+
+Deferred (not blocking — runtime-against-live-infra, user's discretion):
+- `make docker-up` against a running `platform-infra` → four boot lines → `curl /healthz` → `make docker-down`.
+- Push branch to confirm the GitHub Actions PR gate (lint + test + build) goes green.

@@ -31,9 +31,17 @@ correct *before* the real-orchestrator risk is taken on.
 
 ### Validated
 
-<!-- Capabilities confirmed in the codebase via tests. Greenfield — none yet. -->
+<!-- Capabilities confirmed in the codebase via tests. -->
 
-- _(none — the repo is being scaffolded; see Active.)_
+- **SCAF-01..05** — Validated in Phase 1 (repo-scaffold-worker-skeleton):
+  pinned `pyproject.toml` + committed `uv.lock`, the `python -m provisioning_worker`
+  entrypoint booting the four concerns, typed `Settings` (fail-fast), the `/healthz`
+  probe, and the single-tree `provisioning` Alembic wiring. `make check` + a 10-test
+  unit suite are green. Live `make migrate` against Postgres and CI-green-on-Actions
+  are by-design manual and tracked in `phases/01-*/01-HUMAN-UAT.md`.
+- **OBS-01** (bootstrap) — Validated in Phase 1: structlog JSON-in-non-dev renderer
+  selection and an always-on OTel `TracerProvider` (OTLP gated on the endpoint env).
+  Bound per-handler event/instance context and metrics are deferred to Phase 2/5.
 
 ### Active
 
@@ -42,12 +50,13 @@ Milestone 1 — the full provisioning pipeline against the in-memory
 (full text in `REQUIREMENTS.md`):
 
 **Scaffold & runtime**
-- [ ] **SCAF-01..05**: repo scaffold (pinned `pyproject.toml`, `uv.lock`,
+- [x] **SCAF-01..05**: repo scaffold (pinned `pyproject.toml`, `uv.lock`,
   `Makefile`, ruff/pytest, Dockerfile, CI), the `python -m provisioning_worker`
   entrypoint booting the four concerns, typed `Settings`, the `/healthz` probe,
-  and the single-tree Alembic wiring.
-- [ ] **OBS-01**: structlog JSON logging with bound event/instance context and
-  an OTel bootstrap.
+  and the single-tree Alembic wiring. — *validated in Phase 1 (see Validated).*
+- [~] **OBS-01**: structlog JSON logging with bound event/instance context and
+  an OTel bootstrap. — *bootstrap validated in Phase 1; bound handler context +
+  metrics land with real handlers (Phase 2) and Phase 5.*
 
 **Event consumption**
 - [ ] **CONS-01..04**: the Valkey Streams consumer on `events.subscription`
@@ -119,8 +128,13 @@ empty there and this repo's Alembic tree creates the tables. **Coolify is not
 configured anywhere yet** — the M1 fake adapter is what lets us build the whole
 pipeline before that risk is taken on.
 
-**Starting state.** Greenfield: the repo currently holds only `docs/`,
-`CLAUDE.md`, `README.md`, and this `.planning/`. Phase 1 lays down the scaffold.
+**Current state.** Phase 1 (repo scaffold & worker skeleton) is **complete**:
+`pyproject`/`uv.lock`/`Makefile`/CI, the `python -m provisioning_worker`
+entrypoint (four concerns on one asyncio loop), typed `Settings`, the `/healthz`
+probe, structlog/OTel bootstrap, and the single `provisioning` Alembic tree — all
+under a green 10-test unit suite + `make check`. The `modules/provisioning/`
+domain files are deliberate docstring-only stubs until Phase 2. Next: Phase 2
+(event consumption & idempotency).
 
 ## Constraints
 
@@ -188,4 +202,4 @@ This document evolves at phase transitions and milestone boundaries.
    the next milestone's Active scope.
 
 ---
-*Last updated: 2026-06-01 — project initialized from the repo `docs/` set; milestone 1 (fake-adapter pipeline) defined across 5 phases. No code yet; Phase 1 is the scaffold.*
+*Last updated: 2026-06-01 — Phase 1 (repo scaffold & worker skeleton) complete: SCAF-01..05 + OBS-01 bootstrap validated under a green unit suite; live `make migrate` + CI-green tracked in `01-HUMAN-UAT.md`. Milestone 1 (fake-adapter pipeline) continues with Phase 2.*

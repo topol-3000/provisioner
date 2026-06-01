@@ -29,9 +29,11 @@ deployment adapter.
 ## Current Position
 
 Phase: 1
-Plan: Not started
+Plan: Not started — context gathered
 Status: Ready to plan
 Last activity: 2026-06-01
+Resume file: .planning/phases/01-repo-scaffold-worker-skeleton/01-CONTEXT.md
+Stopped at: Phase 1 context gathered (15 decisions D-01..D-15; mirror platform-api for Docker/CI/Settings/OTel)
 
 Progress: [          ] 0%
 

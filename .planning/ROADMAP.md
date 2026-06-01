@@ -30,7 +30,7 @@ bearer token + serving `enforcement_snapshot` to a live plugin,
 - Integer phases (1, 2, 3): planned milestone work.
 - Decimal phases (2.1, 2.2): urgent insertions (marked INSERTED).
 
-- [ ] **Phase 1: Repo scaffold & worker skeleton** — `pyproject`/`uv.lock`/`Makefile`/CI, the `python -m provisioning_worker` entrypoint (four concerns), typed `Settings`, `/healthz`, the single `provisioning` Alembic tree, structlog/OTel bootstrap
+- [x] **Phase 1: Repo scaffold & worker skeleton** — `pyproject`/`uv.lock`/`Makefile`/CI, the `python -m provisioning_worker` entrypoint (four concerns), typed `Settings`, `/healthz`, the single `provisioning` Alembic tree, structlog/OTel bootstrap (completed 2026-06-01)
 - [ ] **Phase 2: Event consumption & idempotency** — the `events.subscription` consumer (`cg.provisioning-convergence`), the re-implemented envelope + `subscription.*` payloads, transactional `processed_event` dedupe, poison-message handling
 - [ ] **Phase 3: Registry & create-path (fake adapter)** — `provisioning.instance`/`provisioning_task`/`enforcement_snapshot` tables, the `DeploymentAdapter` port + `FakeDeploymentAdapter`, `subscription.activated` → `ready`, `InstanceSpec`, Taskiq retry/backoff, console credential delivery
 - [ ] **Phase 4: Event production (outbox → relay)** — `provisioning.event_outbox` + relay to `events.instance`, the envelope publisher, and `instance.provisioned` emitted atomically on first `ready`
@@ -47,7 +47,7 @@ serves `/healthz`, and shuts down cleanly), and pass `make check` + an empty
 **Mode:** mvp
 **Depends on**: `platform-infra` running (Postgres + Valkey).
 **Requirements**: SCAF-01, SCAF-02, SCAF-03, SCAF-04, SCAF-05, OBS-01
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 **Success Criteria** (what must be TRUE):
 
   1. `uv sync --frozen --extra dev` installs the pinned stack from a committed `uv.lock`; `make check` (ruff check + format --check) passes.
@@ -67,7 +67,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — Container + CI: Dockerfile (two-stage, uv, non-root), docker-compose.yml (external platform-net), .github/workflows/ci.yml (lint + test + build-only)
+- [x] 01-03-PLAN.md — Container + CI: Dockerfile (two-stage, uv, non-root), docker-compose.yml (external platform-net), .github/workflows/ci.yml (lint + test + build-only)
 
 ### Phase 2: Event consumption & idempotency
 

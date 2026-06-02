@@ -1,10 +1,26 @@
 """Unit tests for the provisioning ORM models.
 
-Pins the `ProcessedEvent` idempotency-ledger mapping: table name, schema,
-column set, and the composite primary key on `(event_id, consumer_group)`.
+Pins the `ProcessedEvent` idempotency-ledger mapping and the Phase 3
+registry tables (`Instance`, `ProvisioningTask`, `EnforcementSnapshot`):
+table names, schemas, column sets, PKs, FKs, and UNIQUE constraints.
+All tests are pure metadata inspections — no database required.
 """
 
-from provisioning_worker.modules.provisioning.models import Base, ProcessedEvent
+from provisioning_worker.modules.provisioning.models import (
+    Base,
+    EnforcementSnapshot,
+    Instance,
+    InstanceStatus,
+    ProcessedEvent,
+    ProvisioningTask,
+    ProvisioningTaskStatus,
+    TaskType,
+)
+
+
+# ---------------------------------------------------------------------------
+# ProcessedEvent (Phase 2 — keep intact)
+# ---------------------------------------------------------------------------
 
 
 def test_processed_event_tablename() -> None:
@@ -35,3 +51,139 @@ def test_base_metadata_registers_processed_event() -> None:
     This is what `migrations/provisioning/env.py` imports for autogenerate.
     """
     assert "provisioning.processed_event" in Base.metadata.tables
+
+
+# ---------------------------------------------------------------------------
+# Python enum classes (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_instance_status_enum_values() -> None:
+    """InstanceStatus has exactly the 8 documented lifecycle values."""
+    assert set(InstanceStatus.__members__) == {
+        "pending",
+        "deploying",
+        "configuring",
+        "ready",
+        "suspended",
+        "failed",
+        "deprovisioning",
+        "deprovisioned",
+    }
+
+
+def test_provisioning_task_status_enum_values() -> None:
+    """ProvisioningTaskStatus has the 4 documented task lifecycle values."""
+    assert set(ProvisioningTaskStatus.__members__) == {
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+    }
+
+
+def test_task_type_enum_values() -> None:
+    """TaskType has the 5 documented task type values."""
+    assert set(TaskType.__members__) == {
+        "create",
+        "update",
+        "suspend",
+        "reinstate",
+        "delete",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Instance table (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_instance_tablename() -> None:
+    """Instance maps to the `instance` table."""
+    assert Instance.__tablename__ == "instance"
+
+
+def test_instance_schema() -> None:
+    """Instance lives in the `provisioning` schema."""
+    # __table_args__ is a tuple when there are constraints; schema is last element
+    table_args = Instance.__table_args__
+    if isinstance(table_args, tuple):
+        schema_dict = table_args[-1]
+    else:
+        schema_dict = table_args
+    assert schema_dict.get("schema") == "provisioning"
+
+
+def test_instance_columns() -> None:
+    """Instance has exactly the documented column set."""
+    cols = {c.name for c in Instance.__table__.columns}
+    assert cols == {
+        "id",
+        "subscription_id",
+        "customer_id",
+        "status",
+        "hostname",
+        "url",
+        "admin_email",
+        "desired_seat_cap",
+        "desired_resource_caps",
+        "deployment_handle",
+        "failed_step",
+        "failure_reason",
+        "ready_at",
+        "last_status_check_at",
+        "snapshot_version",
+        "version",
+        "created_at",
+        "updated_at",
+    }
+
+
+def test_instance_subscription_id_unique() -> None:
+    """subscription_id has a UNIQUE constraint (1:1:1 invariant)."""
+    for constraint in Instance.__table__.constraints:
+        cols = {c.name for c in constraint.columns}
+        if cols == {"subscription_id"}:
+            return  # found UniqueConstraint covering subscription_id
+    # Also check the column-level unique flag
+    for col in Instance.__table__.columns:
+        if col.name == "subscription_id" and col.unique:
+            return
+    raise AssertionError("No UNIQUE constraint found on Instance.subscription_id")
+
+
+# ---------------------------------------------------------------------------
+# ProvisioningTask table (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_provisioning_task_fk() -> None:
+    """ProvisioningTask.instance_id has a FK pointing to provisioning.instance.id."""
+    fks = ProvisioningTask.__table__.foreign_keys
+    assert len(fks) >= 1
+    targets = {fk.target_fullname for fk in fks}
+    assert "provisioning.instance.id" in targets
+
+
+# ---------------------------------------------------------------------------
+# EnforcementSnapshot table (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_enforcement_snapshot_pk() -> None:
+    """EnforcementSnapshot.instance_id is the sole primary key column."""
+    pk_cols = {c.name for c in EnforcementSnapshot.__table__.primary_key}
+    assert pk_cols == {"instance_id"}
+
+
+# ---------------------------------------------------------------------------
+# Base.metadata completeness (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_base_metadata_includes_new_tables() -> None:
+    """Base.metadata includes all three Phase-3 registry tables."""
+    tables = Base.metadata.tables
+    assert "provisioning.instance" in tables
+    assert "provisioning.provisioning_task" in tables
+    assert "provisioning.enforcement_snapshot" in tables

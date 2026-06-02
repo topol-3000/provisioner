@@ -160,11 +160,20 @@ class ValkeyStreamsConsumer:
     ) -> None:
         """Parse, validate, and dispatch one stream message.
 
-        Implements the four-stage poison / unknown-type / payload-error /
-        happy-path policy. Every terminal branch ``XACK``s the message: poison
-        and unknown-type entries are acked without a ledger row (retrying
-        cannot fix them); the happy path acks only after
-        :func:`handle_with_dedupe` commits (D-06).
+        Implements a five-stage pipeline. Every terminal branch except stage 5
+        failure ``XACK``s the message: poison and unknown-type entries are acked
+        without a ledger row (retrying cannot fix them); the happy path acks only
+        after :func:`handle_with_dedupe` commits (D-06).
+
+        1. ``json.loads`` — bad JSON / missing field → poison → error + ``XACK``.
+        2. Outer envelope validation — drift → poison → error + ``XACK``.
+        3. Payload class lookup — unknown registered type → warning + ``XACK``.
+        4. Inner payload validation — drift → poison → error + ``XACK``.
+        5. Handler invocation — transient failure → ``log.exception`` + return
+           **without** ``XACK``; the message stays in PEL and ``XAUTOCLAIM``
+           reclaims it later. The poll loop is never killed by a handler error.
+           A registered type with no handler in the map is logged as a warning
+           and ``XACK``-ed (observable silent drop, same as unknown type).
 
         Args:
             msg_id: The stream entry id.
@@ -212,8 +221,24 @@ class ValkeyStreamsConsumer:
             return
 
         handler = handlers.get(raw_env.type)
-        if handler is not None:
+        if handler is None:
+            log.warning(
+                "registered type has no handler — dropping",
+                msg_id=msg_id,
+                envelope_type=raw_env.type,
+            )
+            await self._ack(msg_id)
+            return
+
+        try:
             await handler(raw_env, payload)
+        except Exception:
+            log.exception(
+                "handler failed — leaving message unacked for reclaim",
+                msg_id=msg_id,
+                envelope_type=raw_env.type,
+            )
+            return  # no XACK; XAUTOCLAIM reclaims the entry later
         # Commit-then-ack: XACK only after the dedupe wrapper has committed.
         await self._ack(msg_id)
 

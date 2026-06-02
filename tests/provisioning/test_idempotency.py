@@ -242,3 +242,42 @@ async def test_concurrent_duplicate_unit(monkeypatch: pytest.MonkeyPatch) -> Non
     await handle_with_dedupe(raw_env, MagicMock(), handler, _GROUP)
 
     mock_session.rollback.assert_awaited_once()
+
+
+async def test_dispatch_handler_failure_leaves_message_unacked() -> None:
+    """WR-01: handler exception → log.exception at boundary + no XACK (reclaim retries).
+
+    A transient handler failure must not crash the poll loop.  The message is
+    intentionally left un-ACKed so ``XAUTOCLAIM`` reclaims it on the next scan.
+    """
+    consumer = _consumer_with_mock_client()
+    handler = AsyncMock(side_effect=RuntimeError("transient failure"))
+
+    await consumer._dispatch(
+        "6-0",
+        {"envelope": json.dumps(_VALID_ENVELOPE)},
+        {"subscription.activated": handler},
+    )
+
+    # No XACK — message stays in PEL for reclaim.
+    consumer._client.xack.assert_not_awaited()
+
+
+async def test_dispatch_registered_type_no_handler_warns_and_acks() -> None:
+    """WR-04: registered type absent from handler map → warning log + XACK (observable drop).
+
+    If a payload type is in the registry (passes stage-3 lookup) but has no
+    handler wired into the consumer, the message is ACKed with a warning so it
+    is not silently dropped without any log output.
+    """
+    consumer = _consumer_with_mock_client()
+
+    # Pass an empty handlers map — subscription.activated is registered but no handler.
+    await consumer._dispatch(
+        "7-0",
+        {"envelope": json.dumps(_VALID_ENVELOPE)},
+        {},
+    )
+
+    # Must ACK to avoid leaving the message in PEL forever.
+    consumer._client.xack.assert_awaited_once()

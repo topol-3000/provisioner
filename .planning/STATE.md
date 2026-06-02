@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
 status: executing
-last_updated: "2026-06-02T08:08:42.467Z"
-last_activity: 2026-06-02 -- Phase 02 planning complete
+last_updated: "2026-06-02T09:02:22.199Z"
+last_activity: 2026-06-02
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 4
   percent: 20
 ---
 
@@ -23,19 +23,19 @@ See: .planning/PROJECT.md (created 2026-06-01)
 Odoo instance — automatically, idempotently, and observably — by consuming
 `subscription.*` lifecycle events and converging the instance through a pluggable
 deployment adapter.
-**Current focus:** Phase 2 — event consumption & idempotency
+**Current focus:** Phase 02 — event-consumption-idempotency
 `FakeDeploymentAdapter` (no Coolify, no real Odoo). Phase 1 — repo scaffold & worker skeleton.
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (event-consumption-idempotency) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-02 -- Phase 02 planning complete
-Resume file: .planning/phases/02-event-consumption-idempotency/02-CONTEXT.md
+Last activity: 2026-06-02
+Resume file: None
 Stopped at: Phase 2 context gathered
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 67%
 
 ## Notes
 
@@ -56,3 +56,8 @@ Progress: [██████████] 100%
 | Phase | Plan | Duration | Notes |
 |-------|------|----------|-------|
 | Phase 01 P02 | 811 | 2 tasks | 31 files |
+| Phase 02 P01 | 25m | 2 tasks | 7 files |
+
+## Decisions
+
+- [Phase ?]: Phase 2 Plan 1: EventEnvelope re-implemented consume-only (no build, D-03); five subscription.* payloads with plain Decimal (D-04); envelope type:str for forward-compat (D-05); EventConsumer Protocol is the consume-side seam (D-01)

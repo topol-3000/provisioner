@@ -47,10 +47,10 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
 
 ### Event consumption
 
-- [ ] **CONS-01**: A Valkey Streams consumer reads `events.subscription` via
+- [x] **CONS-01**: A Valkey Streams consumer reads `events.subscription` via
   consumer group `cg.provisioning-convergence` (`XREADGROUP`, `XACK`,
   `XAUTOCLAIM` for stuck entries) and dispatches on the envelope `type`.
-- [ ] **CONS-02**: The `EventEnvelope` and the consumed `subscription.*` payload
+- [x] **CONS-02**: The `EventEnvelope` and the consumed `subscription.*` payload
   models (`activated`, `lines_changed`, `suspended`, `reinstated`, `cancelled`)
   are re-implemented here (frozen, `extra="forbid"`) byte-matching
   `docs/events.md` / platform-api's contract.

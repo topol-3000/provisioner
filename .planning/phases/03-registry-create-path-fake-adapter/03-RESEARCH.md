@@ -919,22 +919,24 @@ Key integration test: the PROV-04 canonical proof:
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Post-commit enqueue mechanism in `handle_with_dedupe`**
-   - What we know: The handler must not enqueue before commit; the dedupe wrapper owns commit.
-   - What's unclear: The cleanest way to pass "enqueue this after commit" from the handler to the wrapper without coupling them. Options: (a) return value sentinel, (b) contextvars slot, (c) extend `handle_with_dedupe` to accept a post-commit coroutine.
-   - Recommendation: Use a contextvars slot (consistent with how structlog contextvars already works in this codebase). The handler stores `(broker, task_name, args)` in a `ContextVar`; the wrapper drains it after `session.commit()`. This keeps the handler and wrapper decoupled.
+All three questions are resolved below and their decisions are adopted by the Phase-3 plans.
 
-2. **Taskiq task listener integration in `_run_convergence`**
-   - What we know: `RedisStreamBroker.listen()` is an async generator; tasks must be imported before `startup()`.
-   - What's unclear: Whether the `broker.receiver.callback(msg.data)` pattern is the intended public API, or whether there is a higher-level `broker.worker_process()` style helper.
-   - Recommendation: Use the `listen()` + manual callback pattern (it is what the taskiq worker CLI does internally); it is fully compatible with the existing `asyncio.TaskGroup` architecture in `main.py`.
+1. **Post-commit enqueue mechanism in `handle_with_dedupe`** — **RESOLVED.**
+   - Decision: **Use a `ContextVar` slot** (consistent with how structlog contextvars already work in this codebase). The handler stores the enqueue request `(task_name, args)` in a `ContextVar`; the `handle_with_dedupe` wrapper drains it **after** `session.commit()` returns and only then calls `.kiq(...)`. This keeps handler and wrapper decoupled and guarantees a job is never enqueued against an uncommitted (or rolled-back) row. Adopted in Plan 03-03 (extends `shared/event_consumer.py` + handler body).
 
-3. **`ResourceRequests` dataclass shape**
-   - What we know: `InstanceSpec` references a `ResourceRequests` field (`cpu` / `memory` requests + limits).
-   - What's unclear: Whether `ResourceRequests` needs to be defined for M1 (FakeAdapter ignores it) or can be left as `Any` with a placeholder.
-   - Recommendation: Define a minimal `ResourceRequests(frozen=True, slots=True)` with `cpu_request: str = "0.5"`, `memory_request: str = "512Mi"` and defaults from Settings. FakeAdapter ignores it; real Coolify adapter will use it in M2.
+2. **Taskiq task listener integration in `_run_convergence`** — **RESOLVED (API verified against installed `taskiq==0.12.4`).**
+   - Verified facts (via `inspect` on the installed package):
+     - `AsyncBroker.listen(self) -> AsyncGenerator[bytes | AckableMessage, None]` exists and is the worker entry point; it yields incoming messages and auto-acks `AckableMessage` after processing.
+     - There is **no** `broker.receiver` attribute — the earlier assumption A2 (`broker.receiver.callback(msg.data)`) was **incorrect** and must not be used.
+     - The correct low-level API is `taskiq.receiver.Receiver(broker, run_startup=False, ...)` whose `async callback(self, message: bytes | AckableMessage, raise_err: bool = False) -> None` parses the message, dispatches to the registered task, and saves the result.
+   - Decision: In the convergence concern, construct one `Receiver(broker, run_startup=False)` and run `async for message in broker.listen(): await receiver.callback(message)`. Tasks must be imported/registered before `broker.startup()`. This composes cleanly with the existing `asyncio.TaskGroup` in `main.py`. (`Receiver.listen(finish_event)` is the all-in-one alternative if a manual loop is undesirable.) Adopted in Plan 03-03 (`main.py` wiring / convergence concern).
+
+3. **`ResourceRequests` dataclass shape** — **RESOLVED.**
+   - Decision: Define a minimal `ResourceRequests(frozen=True, slots=True)` value object with string fields defaulted from `Settings` (e.g. `cpu_request: str = "0.5"`, `memory_request: str = "512Mi"`). The `FakeDeploymentAdapter` ignores it; the real Coolify adapter consumes it in M2. It lives alongside `InstanceSpec` (see the dependency-direction note below). Adopted in Plan 03-01.
+
+> **Dependency-direction correction (consumed by the plans):** the value objects that cross the `DeploymentAdapter` port boundary — `InstanceSpec`, `ResourceRequests`, `InstanceHandle`, `CreateResult` — must be **defined at the port (or in `shared/`), not in `modules/provisioning/spec.py`**, because `ports/` must never import from `modules/` (CLAUDE.md §4). `spec.py` holds only the **builder** and imports these types from the port/shared location. The earlier code snippets that imported `InstanceSpec` from `modules/...spec.py` into `ports/deployment_adapter.py` are superseded by this correction.
 
 ---
 

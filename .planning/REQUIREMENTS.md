@@ -54,7 +54,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
   models (`activated`, `lines_changed`, `suspended`, `reinstated`, `cancelled`)
   are re-implemented here (frozen, `extra="forbid"`) byte-matching
   `docs/events.md` / platform-api's contract.
-- [ ] **CONS-03**: Handlers are idempotent — a replayed `envelope.id`
+- [x] **CONS-03**: Handlers are idempotent — a replayed `envelope.id`
   short-circuits via `provisioning.processed_event(event_id, consumer_group)`
   inserted in the **same transaction** as the state change.
 - [ ] **CONS-04**: A malformed envelope (bad JSON or unknown field) is logged at

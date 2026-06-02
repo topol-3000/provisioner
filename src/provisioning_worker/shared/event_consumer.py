@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from provisioning_worker.infrastructure.db import session_scope
 from provisioning_worker.modules.provisioning.models import ProcessedEvent
@@ -53,14 +54,19 @@ async def handle_with_dedupe(
 ) -> None:
     """Run ``handler_fn`` exactly once per ``(envelope.id, consumer_group)``.
 
-    Opens a single :func:`session_scope` transaction. If a ``processed_event``
-    row already exists for this envelope and consumer group, logs a debug
-    short-circuit and returns without running the handler. Otherwise runs the
-    handler, inserts the ledger row, and commits — both in the same
-    transaction.
+    Opens a single :func:`session_scope` transaction and short-circuits on
+    duplicate delivery via two paths:
 
-    The caller must ``XACK`` only **after** this coroutine returns
-    successfully (commit-then-ack); this function never acks.
+    1. **Sequential replay** — SELECT finds an existing ``processed_event`` row
+       (fast path; the handler never runs).
+    2. **Concurrent duplicate** — SELECT sees nothing (another transaction
+       committed the row between the SELECT and this ``commit()``), the handler
+       runs, then ``commit()`` raises ``IntegrityError`` from the composite PK
+       conflict; this function rolls back and returns without raising, allowing
+       the caller to proceed to ``XACK``.
+
+    In both cases the function returns normally; the caller must ``XACK`` only
+    **after** this coroutine returns (commit-then-ack). This function never acks.
 
     Args:
         raw_env: The validated inbound envelope (must expose ``id``).
@@ -77,7 +83,13 @@ async def handle_with_dedupe(
             return
         await handler_fn(raw_env, payload, session)
         await _insert_processed_event(session, raw_env.id, consumer_group)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # Concurrent duplicate won the race; its commit is authoritative.
+            await session.rollback()
+            log.debug("dedupe conflict — concurrent duplicate", envelope_id=raw_env.id)
+            return
 
 
 def make_handler_registry(

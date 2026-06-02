@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 import provisioning_worker.shared.event_consumer as ec
 from provisioning_worker.adapters.valkey_streams import ValkeyStreamsConsumer
@@ -88,9 +89,7 @@ async def test_dispatch_bad_json_is_poison(caplog: pytest.LogCaptureFixture) -> 
     consumer = _consumer_with_mock_client()
     handler = AsyncMock()
 
-    await consumer._dispatch(
-        "2-0", {"envelope": "not-json"}, {"subscription.activated": handler}
-    )
+    await consumer._dispatch("2-0", {"envelope": "not-json"}, {"subscription.activated": handler})
 
     handler.assert_not_awaited()
     consumer._client.xack.assert_awaited_once()
@@ -183,3 +182,63 @@ def _patch_session_scope(monkeypatch: pytest.MonkeyPatch, session) -> None:
         yield session
 
     monkeypatch.setattr(ec, "session_scope", _scope)
+
+
+@pytest.mark.integration
+async def test_concurrent_duplicate(pg_session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SC-2b: pre-committed duplicate → handle_with_dedupe returns without raising.
+
+    Simulates the concurrent/reclaim-race path: a winning transaction already
+    committed a ``processed_event`` row before the losing ``handle_with_dedupe``
+    call reaches ``session.commit()``. The SELECT sees nothing (the row was
+    committed out-of-band before the patched session_scope starts), the handler
+    runs, the INSERT is staged, then ``commit()`` raises ``IntegrityError`` from
+    the PK conflict. The fix catches that error, rolls back, and returns normally
+    so the caller can proceed to ``XACK``.
+    """
+    # Simulate the concurrent winner: pre-insert and commit out-of-band first.
+    pg_session.add(ProcessedEvent(event_id=_EVENT_ID, consumer_group=_GROUP))
+    await pg_session.commit()
+
+    _patch_session_scope(monkeypatch, pg_session)
+    handler = AsyncMock()
+    raw_env = MagicMock(id=_EVENT_ID)
+
+    # Must not raise — the IntegrityError is caught and treated as idempotent.
+    await handle_with_dedupe(raw_env, MagicMock(), handler, _GROUP)
+
+    # The handler ran once before the conflict was detected.
+    assert handler.await_count == 1
+    # Still exactly one row (the pre-inserted one).
+    count = await pg_session.scalar(select(func.count()).select_from(ProcessedEvent))
+    assert count == 1
+
+
+async def test_concurrent_duplicate_unit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit test (Docker-free): IntegrityError on commit → rollback called, no raise.
+
+    Uses a fake async session whose ``commit()`` raises ``IntegrityError`` on the
+    first call.  Asserts that ``handle_with_dedupe`` catches the error, calls
+    ``rollback()``, and returns without propagating the exception.
+    """
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.add = MagicMock()
+    mock_session.commit = AsyncMock(side_effect=IntegrityError("", None, None))
+    mock_session.rollback = AsyncMock()
+
+    @asynccontextmanager
+    async def _fake_scope():
+        yield mock_session
+
+    monkeypatch.setattr(ec, "session_scope", _fake_scope)
+
+    raw_env = MagicMock(id=_EVENT_ID)
+    handler = AsyncMock()
+
+    # Must not raise — IntegrityError is caught internally.
+    await handle_with_dedupe(raw_env, MagicMock(), handler, _GROUP)
+
+    mock_session.rollback.assert_awaited_once()

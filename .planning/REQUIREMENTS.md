@@ -67,7 +67,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
   tables exist (Alembic), with `instance` shaped to the read model platform-api
   documents (`docs/architecture.md` §Postgres schema). `subscription_id` is
   unique (1:1:1).
-- [ ] **PROV-02**: `subscription.activated` creates an `instance` row (`pending`)
+- [x] **PROV-02**: `subscription.activated` creates an `instance` row (`pending`)
   + a `create` task and converges `pending → deploying → configuring → ready`
   against the `DeploymentAdapter` port via `FakeDeploymentAdapter`.
 - [x] **PROV-03**: An `InstanceSpec` builder (`spec.py`) turns the entitlement
@@ -75,7 +75,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
   spec; the entitlement-resolution approach (reconstruct-from-deltas vs
   read-back) is decided and documented (`docs/events.md` §Resolving
   entitlements).
-- [ ] **PROV-04**: A failed convergence step records `last_error` on the task,
+- [x] **PROV-04**: A failed convergence step records `last_error` on the task,
   sets the instance `failed_step`/`failure_reason`, and schedules an
   exponential-backoff Taskiq retry — the consumer keeps running. The fake
   adapter's fault-injection mode drives this deterministically.
@@ -87,7 +87,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
 - [ ] **PROV-07**: `subscription.cancelled` deprovisions — `immediate` now,
   `at_period_end` scheduled for `grace_until` (delayed Taskiq job) — generating
   a backup ref and tearing down via the adapter.
-- [ ] **PROV-08**: On first `ready`, customer credentials are delivered via the
+- [x] **PROV-08**: On first `ready`, customer credentials are delivered via the
   `NotificationTransport` port (`ConsoleNotificationTransport` in dev);
   credentials are never placed in events or logs.
 

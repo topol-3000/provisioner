@@ -103,7 +103,7 @@ injected failure and console credential delivery.
 **Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: PROV-01, PROV-02, PROV-03, PROV-04, PROV-08, SNAP-01 (table)
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 **Success Criteria** (what must be TRUE):
 
   1. `subscription.activated` opens a `pending` `instance` + a `create` `provisioning_task` and converges `pending → deploying → configuring → ready` via `FakeDeploymentAdapter`; the row ends at `ready` with a populated `url`.
@@ -124,7 +124,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-03-PLAN.md — Convergence engine: service.py + tasks.py (create_instance_task with backoff) + handlers.py real body + main.py wiring — end-to-end slice delivers subscription.activated → ready
+- [x] 03-03-PLAN.md — Convergence engine: service.py + tasks.py (create_instance_task with backoff) + handlers.py real body + main.py wiring — end-to-end slice delivers subscription.activated → ready
 
 **Wave 3** *(blocked on Wave 2 completion)*
 

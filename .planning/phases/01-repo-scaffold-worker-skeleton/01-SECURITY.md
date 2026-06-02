@@ -84,10 +84,25 @@ created: 2026-06-01
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-06-01 | 14 | 14 | 0 | gsd-security-auditor (`/gsd-secure-phase 01`) |
+| 2026-06-02 | 14 | 14 | 0 | re-verification (`/gsd-secure-phase 01`) — short-circuit (plan-time register, 0 open) + post-commit spot-check |
 
 **Unregistered flags:** None. All three SUMMARY.md `## Threat Flags` sections
 (01-01, 01-02, 01-03) map 1:1 to registered threat IDs. No new attack surface
 appeared during implementation without a corresponding threat entry.
+
+**2026-06-02 re-verification note.** Commits landed after the 2026-06-01 audit;
+the security-relevant one is `b62ce54 fix(settings): require DATABASE_URL/VALKEY_URL,
+drop dev-cred defaults`. This **strengthens** the `ENV → Settings` trust boundary —
+`settings.py:40-48` now declares `database_url`/`valkey_url` as required `Field`s with
+no dev-credential defaults, so a missing value fails fast at boundary validation
+instead of silently using a baked-in default. No threat is opened by this change.
+Spot-checked the load-bearing mitigations against current code and all hold:
+`.gitignore:26-29` / `.dockerignore:19-21` (`.env` excluded), `main.py:116` (`block=1000`)
++ `main.py:110` (shutdown guard), `health_server.py:33-35` (`AppRunner`/`TCPSite`, no
+`run_app`), `Dockerfile:65-66,80` (uid/gid 10001 + `USER platform`), `main.py:71` /
+`__main__.py:14` (`except*`), `ci.yml:104-105` (`push: false` / `load: true`). T-01-06
+holds — zero f-string/`%`/`.format()` interpolation across all `log.*` sites in `src/`;
+the `main.py:146` informational note still applies unchanged (revisit in M2 only).
 
 ---
 

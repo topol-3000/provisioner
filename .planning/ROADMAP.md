@@ -103,6 +103,7 @@ injected failure and console credential delivery.
 **Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: PROV-01, PROV-02, PROV-03, PROV-04, PROV-08, SNAP-01 (table)
+**Plans:** 4 plans
 **Success Criteria** (what must be TRUE):
 
   1. `subscription.activated` opens a `pending` `instance` + a `create` `provisioning_task` and converges `pending → deploying → configuring → ready` via `FakeDeploymentAdapter`; the row ends at `ready` with a populated `url`.
@@ -110,6 +111,24 @@ injected failure and console credential delivery.
   3. An injected adapter failure (`fail_on={"create"}`) records `last_error`, sets `failed_step`, and schedules a backoff retry that later succeeds — the consumer never crashes.
   4. On first `ready`, `ConsoleNotificationTransport` emits the credentials notification; no credential value appears in any event or log line.
   5. The `instance`, `provisioning_task`, and `enforcement_snapshot` tables exist via the single Alembic tree.
+
+Plans:
+
+**Wave 0** *(contracts, schema, test scaffolds)*
+
+- [ ] 03-01-PLAN.md — DB schema (models.py extend + Alembic migration) + ports (4 Protocols) + shared/errors.py + schemas.py + spec.py + conftest ENUM fix + test_models.py/test_spec.py Wave 0 assertions
+
+**Wave 1** *(blocked on Wave 0 completion)*
+
+- [ ] 03-02-PLAN.md — Concrete adapters (FakeDeploymentAdapter, ConsoleNotificationTransport, DefaultEntitlementResolver, SystemClock) + repository.py + settings.py extension
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-03-PLAN.md — Convergence engine: service.py + tasks.py (create_instance_task with backoff) + handlers.py real body + main.py wiring — end-to-end slice delivers subscription.activated → ready
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-04-PLAN.md — Full test suite: test_handlers.py updates, test_service.py, test_tasks.py (PROV-04 canonical proof, credential-once, snapshot write), make test + make test-integration green
 
 ### Phase 4: Event production (outbox → relay)
 

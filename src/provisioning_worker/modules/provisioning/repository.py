@@ -16,7 +16,7 @@ canonical home) rather than ``modules/provisioning/spec.py`` — the dependency
 arrow always points inward.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import select
 
@@ -27,7 +27,7 @@ from provisioning_worker.modules.provisioning.models import (
     ProvisioningTask,
     ProvisioningTaskStatus,
 )
-from provisioning_worker.shared.errors import DeploymentFailed
+from provisioning_worker.shared.errors import DeploymentFailed, InstanceNotFound
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -42,11 +42,31 @@ __all__ = [
     "get_instance_by_subscription_id",
     "get_task_by_id",
     "insert_enforcement_snapshot",
+    "mark_task_terminal",
     "record_task_failure",
     "record_task_success",
     "update_instance_status",
     "update_snapshot_version",
 ]
+
+# WR-04: only these columns may be set via update_instance_status(**kwargs).
+# A typo (e.g. read_at= instead of ready_at=) raises instead of silently
+# setting a junk attribute on the ORM object that never persists.
+_UPDATABLE_INSTANCE_COLUMNS: Final[frozenset[str]] = frozenset(
+    {
+        "hostname",
+        "url",
+        "admin_email",
+        "desired_seat_cap",
+        "desired_resource_caps",
+        "deployment_handle",
+        "failed_step",
+        "failure_reason",
+        "ready_at",
+        "last_status_check_at",
+        "snapshot_version",
+    }
+)
 
 
 async def get_instance_by_id(
@@ -121,14 +141,33 @@ async def update_instance_status(
         session: The open async session owned by the caller.
         instance_id: UUID primary key of the instance to update.
         status: The new ``InstanceStatus`` value.
-        **kwargs: Extra attributes to set on the instance row
-            (e.g. ``url``, ``hostname``, ``ready_at``, ``snapshot_version``,
-            ``deployment_handle``, ``failed_step``, ``failure_reason``).
+        **kwargs: Extra attributes to set on the instance row. Must be drawn
+            from ``_UPDATABLE_INSTANCE_COLUMNS`` (e.g. ``url``, ``hostname``,
+            ``ready_at``, ``snapshot_version``, ``deployment_handle``,
+            ``failed_step``, ``failure_reason``). Unknown keys raise
+            ``ValueError`` (WR-04).
+
+    Raises:
+        ValueError: If a keyword argument is not a known updatable column.
+        InstanceNotFound: If no instance row exists for ``instance_id``.
     """
+    # WR-04(2): reject unknown keyword keys up-front so a typo surfaces as an
+    # explicit error rather than silently setting a junk attribute that never
+    # persists.
+    unknown_keys = set(kwargs) - _UPDATABLE_INSTANCE_COLUMNS
+    if unknown_keys:
+        raise ValueError(
+            f"update_instance_status: unknown column(s) {sorted(unknown_keys)} — "
+            f"allowed: {sorted(_UPDATABLE_INSTANCE_COLUMNS)}"
+        )
+
     result = await session.execute(select(Instance).where(Instance.id == instance_id))
     instance = result.scalar_one_or_none()
+    # WR-04(1): a missing instance is a hard error — the caller must react
+    # rather than silently no-op and then proceed to mark the task succeeded
+    # / deliver credentials for an instance that no longer exists.
     if instance is None:
-        return
+        raise InstanceNotFound(f"no instance row for id {instance_id}")
     instance.status = status
     for key, value in kwargs.items():
         setattr(instance, key, value)
@@ -168,7 +207,11 @@ async def record_task_failure(
         task.attempt_count += 1
         task.last_error = str(error)
         task.next_attempt_at = next_attempt_at
-        task.status = ProvisioningTaskStatus.running  # stays running until max attempts
+        # Stays `running` while a retry is pending. Never clobber a terminal
+        # `failed` status back to `running` (CR-02) — a terminal task must
+        # stay terminal so boot recovery does not re-kick it forever.
+        if task.status is not ProvisioningTaskStatus.failed:
+            task.status = ProvisioningTaskStatus.running
 
     # Update instance
     instance_result = await session.execute(select(Instance).where(Instance.id == instance_id))
@@ -181,6 +224,30 @@ async def record_task_failure(
         else:
             instance.failed_step = None
             instance.failure_reason = str(error)
+
+
+async def mark_task_terminal(
+    session: AsyncSession,
+    task_id: UUID,
+) -> None:
+    """Mark a provisioning task as terminally failed (no further retries).
+
+    Sets ``task.status = failed`` and clears ``task.next_attempt_at`` so the
+    boot-recovery query (``status IN ('pending','running')`` AND overdue
+    ``next_attempt_at``) never matches it again (CR-02). Called when the retry
+    budget is exhausted or a non-retryable error occurs.
+
+    Does NOT commit — the caller owns the transaction.
+
+    Args:
+        session: The open async session owned by the caller.
+        task_id: UUID of the provisioning task to mark terminal.
+    """
+    result = await session.execute(select(ProvisioningTask).where(ProvisioningTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is not None:
+        task.status = ProvisioningTaskStatus.failed
+        task.next_attempt_at = None
 
 
 async def record_task_success(

@@ -53,7 +53,7 @@ from provisioning_worker.ports.notification_transport import (
     NotificationTransport,
 )
 from provisioning_worker.settings import Settings  # noqa: TC001 — runtime DI
-from provisioning_worker.shared.errors import AdapterTimeout, DeploymentFailed  # noqa: F401
+from provisioning_worker.shared.errors import AdapterTimeout, NonRetryableError
 
 __all__ = ["create_instance_task"]
 
@@ -165,23 +165,46 @@ async def _run_convergence(
         instance = await repository.get_instance_by_id(session, instance_id)
         task = await repository.get_task_by_id(session, task_id)
 
-    if instance is None or task is None:
-        log.warning(
-            "create_instance_task: instance or task not found — skipping",
-            instance_found=instance is not None,
-            task_found=task is not None,
-        )
-        return
+        if instance is None or task is None:
+            log.warning(
+                "create_instance_task: instance or task not found — skipping",
+                instance_found=instance is not None,
+                task_found=task is not None,
+            )
+            return
 
-    # Rebuild spec from task.payload (WARNING 5 fix: canonical round-trip).
-    spec = InstanceSpec.from_dict(task.payload)
+        # CR-01 fix: read every scalar we need WHILE the session is still open.
+        # SQLAlchemy async sessions default to expire_on_commit=True, so once
+        # this `session_scope()` block exits the ORM objects are detached and
+        # any further attribute access lazy-loads — raising MissingGreenlet /
+        # DetachedInstanceError on the real engine. Capture the values now.
+        current_status = instance.status
+        task_payload = task.payload
+
+    # WR-03 fix: guard a missing/malformed payload as a permanent (non-retryable)
+    # failure rather than burning the retry budget on an un-parseable payload.
+    if task_payload is None:
+        raise NonRetryableError(
+            "task payload is missing — cannot build InstanceSpec",
+            step="parse_payload",
+            reason="task.payload is None",
+        )
+    try:
+        # Rebuild spec from task.payload (WARNING 5 fix: canonical round-trip).
+        spec = InstanceSpec.from_dict(task_payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise NonRetryableError(
+            "task payload is malformed — cannot build InstanceSpec",
+            step="parse_payload",
+            reason=str(exc),
+        ) from exc
 
     # --- Step 1: create_instance -> deploying ---
     create_result = await adapter.create_instance(spec)
     handle_dict = dataclasses.asdict(create_result.handle)
 
     async with session_scope() as session:
-        service.validate_transition(instance.status, InstanceStatus.deploying)
+        service.validate_transition(current_status, InstanceStatus.deploying)
         await repository.update_instance_status(
             session, instance_id, InstanceStatus.deploying, deployment_handle=handle_dict
         )
@@ -224,17 +247,33 @@ async def _run_convergence(
 
     # Send credentials exactly once: only when ready_at was NULL (D-13, T-3-09).
     # Secrets are discarded after this call — never assigned to any persistent variable.
+    #
+    # WR-06 fix: convergence has already committed `ready` + task `succeeded`
+    # above. A notification-transport hiccup must NOT drag a fully-converged
+    # instance back to `failed` and re-kick the task. Isolate the delivery in
+    # its own try/except so a send failure is logged for human follow-up but
+    # never propagates into the convergence failure path.
     if is_first_ready:
-        await transport.send_credentials(
-            CredentialNotification(
-                recipient_email=spec.admin_email,
-                instance_id=instance_id,
-                instance_url=f"https://{spec.slug}",
-                admin_login=spec.admin_email,
-                admin_password=create_result.admin_password,  # never logged (T-3-07)
+        try:
+            await transport.send_credentials(
+                CredentialNotification(
+                    recipient_email=spec.admin_email,
+                    instance_id=instance_id,
+                    instance_url=f"https://{spec.slug}",
+                    admin_login=spec.admin_email,
+                    admin_password=create_result.admin_password,  # never logged (T-3-07)
+                )
             )
-        )
-        log.info("credentials delivered", instance_id=str(instance_id))
+            log.info("credentials delivered", instance_id=str(instance_id))
+        except Exception as exc:  # convergence already succeeded; do not re-fail
+            # Never log the password or notification contents (T-3-07).
+            log.error(
+                "credential delivery failed after instance reached ready — "
+                "convergence is complete; manual re-delivery required",
+                instance_id=str(instance_id),
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
     else:
         log.info("skipping credential re-delivery — ready_at already set (D-13)")
 
@@ -275,12 +314,19 @@ async def _handle_failure(
     settings: Settings,
     clock: Clock,
 ) -> None:
-    """Record a task failure and schedule a retry if below max_attempts.
+    """Record a task failure and either schedule a retry or mark it terminal.
 
     Persists ``last_error``, ``failed_step``, ``failure_reason`` to DB and
-    sets ``instance.status = failed`` (D-09). If ``attempt_count`` is below
-    ``max_attempts``, sleeps for the computed backoff and re-kicks the task.
-    Otherwise the task is terminal.
+    sets ``instance.status = failed`` (D-09). The retry decision is made on the
+    *persisted* (post-increment) ``attempt_count`` returned by
+    ``record_task_failure`` — comparing the same value that is stored avoids
+    the implicit off-by-one of the previous pre-increment compare (CR-03).
+
+    When the persisted attempt count reaches ``provisioning_max_attempts`` —
+    or when the failure is a :class:`NonRetryableError` (e.g. an un-parseable
+    payload, WR-03) — the task is marked terminal via
+    ``repository.mark_task_terminal`` (``status=failed``, ``next_attempt_at``
+    cleared) so boot recovery never re-kicks a doomed task forever (CR-02).
 
     Args:
         instance_id: UUID of the instance.
@@ -289,10 +335,12 @@ async def _handle_failure(
         settings: Application settings (backoff knobs, max_attempts).
         clock: The clock for time/sleep (FakeClock.sleep is a no-op).
     """
+    non_retryable = isinstance(exc, NonRetryableError)
     log.error(
         "create_instance_task failed",
         error=str(exc),
         error_type=type(exc).__name__,
+        non_retryable=non_retryable,
     )
 
     async with session_scope() as session:
@@ -301,25 +349,36 @@ async def _handle_failure(
             log.warning("task not found during failure recording — skipping retry")
             return
 
-        attempt_count = task.attempt_count
-        backoff = _compute_backoff_seconds(attempt_count, settings)
+        # Backoff is computed on the pre-increment attempt index (0-based), so
+        # the first failure waits `base_delay` (attempt index 0).
+        backoff = _compute_backoff_seconds(task.attempt_count, settings)
         next_attempt_at = clock.now() + timedelta(seconds=backoff)
 
         await repository.record_task_failure(session, task_id, instance_id, exc, next_attempt_at)
+        # The authoritative, persisted attempt count after this failure.
+        new_attempt_count = task.attempt_count
+
+        is_terminal = non_retryable or new_attempt_count >= settings.provisioning_max_attempts
+        if is_terminal:
+            # CR-02: close the ledger so boot recovery does not re-kick forever.
+            await repository.mark_task_terminal(session, task_id)
+
         await session.commit()
 
-    if attempt_count < settings.provisioning_max_attempts - 1:
-        log.info(
-            "scheduling retry",
-            attempt_count=attempt_count,
-            backoff_s=backoff,
-            next_attempt_at=str(next_attempt_at),
-        )
-        await clock.sleep(backoff)
-        await create_instance_task.kiq(str(instance_id), str(task_id))
-    else:
+    if is_terminal:
         log.error(
-            "max attempts reached — task is terminal",
-            attempt_count=attempt_count,
+            "task is terminal — no further retries",
+            attempt_count=new_attempt_count,
             max_attempts=settings.provisioning_max_attempts,
+            non_retryable=non_retryable,
         )
+        return
+
+    log.info(
+        "scheduling retry",
+        attempt_count=new_attempt_count,
+        backoff_s=backoff,
+        next_attempt_at=str(next_attempt_at),
+    )
+    await clock.sleep(backoff)
+    await create_instance_task.kiq(str(instance_id), str(task_id))

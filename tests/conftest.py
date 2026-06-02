@@ -6,6 +6,13 @@ fixtures from here — they use mocks. The fixtures below back the
 async engine bound to it (with the ``provisioning`` schema and the mapped
 tables created), and a function-scoped session that rolls back after each test
 for isolation.
+
+Phase 3 additions:
+- ENUM type creation before ``Base.metadata.create_all`` (required because ORM
+  columns use ``create_type=False``).
+- ``fake_clock`` fixture for ``FakeClock`` (deterministic time in unit tests).
+- ``in_memory_broker`` fixture stub (full wiring in Plan 02 once adapters are
+  available).
 """
 
 from typing import TYPE_CHECKING
@@ -21,6 +28,7 @@ from sqlalchemy.ext.asyncio import (
 from testcontainers.postgres import PostgresContainer
 
 from provisioning_worker.modules.provisioning.models import Base
+from provisioning_worker.ports.clock import FakeClock
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -40,13 +48,35 @@ async def pg_engine(postgres_container: PostgresContainer) -> AsyncIterator[Asyn
     The testcontainers connection URL names the ``psycopg2`` driver; this repo
     pins ``psycopg`` (v3), so the driver token is rewritten. The
     ``provisioning`` schema is created first (it exists empty in real infra via
-    platform-infra's init SQL), then ``Base.metadata`` builds the mapped
-    tables.
+    platform-infra's init SQL), then ENUM types are created explicitly (because
+    ORM columns use ``create_type=False``), and finally ``Base.metadata`` builds
+    the mapped tables.
     """
     url = postgres_container.get_connection_url().replace("psycopg2", "psycopg")
     engine = create_async_engine(url)
     async with engine.begin() as conn:
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS provisioning"))
+        # ENUM types must be created before create_all because ORM columns use
+        # create_type=False (T-3-01 mitigation — avoids "type already exists" errors).
+        await conn.execute(
+            text(
+                "CREATE TYPE IF NOT EXISTS provisioning.instance_status AS ENUM ("
+                "'pending', 'deploying', 'configuring', 'ready', "
+                "'suspended', 'failed', 'deprovisioning', 'deprovisioned')"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TYPE IF NOT EXISTS provisioning.task_type AS ENUM ("
+                "'create', 'update', 'suspend', 'reinstate', 'delete')"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TYPE IF NOT EXISTS provisioning.task_status AS ENUM ("
+                "'pending', 'running', 'succeeded', 'failed')"
+            )
+        )
         await conn.run_sync(Base.metadata.create_all)
     try:
         yield engine
@@ -74,3 +104,13 @@ async def pg_session(pg_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
                     text(f'TRUNCATE TABLE "{table.schema}"."{table.name}" CASCADE')
                 )
             await session.commit()
+
+
+@pytest.fixture
+def fake_clock() -> FakeClock:
+    """FakeClock with a fixed time; sleep() is a no-op.
+
+    Injects deterministic time into convergence tasks so retry/backoff
+    paths execute without real delays in unit tests.
+    """
+    return FakeClock()

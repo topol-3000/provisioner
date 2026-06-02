@@ -82,9 +82,40 @@ class Settings(BaseSettings):
         description="Outbox relay batch size per poll.",
     )
 
-    # ----- Instance provisioning -----
+    # ----- Instance provisioning — spec defaults (D-03) -----
     instance_domain_suffix: str = "example.local"
     odoo_base_image: str = "odoo:17"
+    provisioning_default_seat_cap: int = Field(
+        default=10,
+        ge=1,
+        description="Default seat cap for M1 placeholder specs (D-03).",
+    )
+    provisioning_default_resource_caps: str = Field(
+        default="{}",
+        description="JSON string of default resource caps; parsed at use site.",
+    )
+
+    # ----- Instance provisioning — retry backoff (D-08) -----
+    provisioning_max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description="Maximum convergence task attempts before marking terminal failure.",
+    )
+    provisioning_base_delay_s: float = Field(
+        default=2.0,
+        gt=0.0,
+        description="Base backoff delay in seconds (exponential backoff formula).",
+    )
+    provisioning_multiplier: float = Field(
+        default=2.0,
+        gt=1.0,
+        description="Backoff multiplier applied per attempt.",
+    )
+    provisioning_cap_s: float = Field(
+        default=60.0,
+        gt=0.0,
+        description="Maximum backoff delay in seconds (cap).",
+    )
 
     # ----- OpenTelemetry (optional) -----
     otel_exporter_otlp_endpoint: str | None = None

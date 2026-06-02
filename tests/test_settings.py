@@ -96,12 +96,20 @@ def test_consumer_reclaim_min_idle_ms_rejects_below_floor() -> None:
         )
 
 
-def test_env_file_loading(tmp_path: Path) -> None:
+def test_env_file_loading(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Settings loads values from a .env file.
 
     Writes a temp env file with required DSNs and a distinctive CONSUMER_NAME,
     then verifies Settings picks up the consumer name from the file.
+
+    Real environment variables outrank the ``_env_file`` argument in
+    pydantic-settings, so the ambient values this test exercises are cleared
+    first — otherwise an injected ``CONSUMER_NAME`` (e.g. the Makefile's
+    ``include .env`` / ``export``) would mask the file under test.
     """
+    for key in ("DATABASE_URL", "DATABASE_URL_SYNC", "VALKEY_URL", "CONSUMER_NAME"):
+        monkeypatch.delenv(key, raising=False)
+
     env_file = tmp_path / ".env"
     env_file.write_text(
         "DATABASE_URL=postgresql+psycopg://u:p@localhost:5432/db\n"

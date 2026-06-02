@@ -32,7 +32,7 @@ bearer token + serving `enforcement_snapshot` to a live plugin,
 
 - [x] **Phase 1: Repo scaffold & worker skeleton** — `pyproject`/`uv.lock`/`Makefile`/CI, the `python -m provisioning_worker` entrypoint (four concerns), typed `Settings`, `/healthz`, the single `provisioning` Alembic tree, structlog/OTel bootstrap (completed 2026-06-01)
 - [x] **Phase 2: Event consumption & idempotency** — the `events.subscription` consumer (`cg.provisioning-convergence`), the re-implemented envelope + `subscription.*` payloads, transactional `processed_event` dedupe, poison-message handling (all 3 plans built; verification gaps_found 2026-06-02 — CONS-03 idempotency blocker, see 02-VERIFICATION.md) (completed 2026-06-02)
-- [ ] **Phase 3: Registry & create-path (fake adapter)** — `provisioning.instance`/`provisioning_task`/`enforcement_snapshot` tables, the `DeploymentAdapter` port + `FakeDeploymentAdapter`, `subscription.activated` → `ready`, `InstanceSpec`, Taskiq retry/backoff, console credential delivery
+- [x] **Phase 3: Registry & create-path (fake adapter)** — `provisioning.instance`/`provisioning_task`/`enforcement_snapshot` tables, the `DeploymentAdapter` port + `FakeDeploymentAdapter`, `subscription.activated` → `ready`, `InstanceSpec`, Taskiq retry/backoff, console credential delivery (completed 2026-06-02)
 - [ ] **Phase 4: Event production (outbox → relay)** — `provisioning.event_outbox` + relay to `events.instance`, the envelope publisher, and `instance.provisioned` emitted atomically on first `ready`
 - [ ] **Phase 5: Full lifecycle convergence** — `lines_changed` / `suspended` / `reinstated` / `cancelled` (incl. `at_period_end` grace), the rest of the `instance.*` catalog, enforcement-snapshot computation/versioning, and observability (metrics) polish
 
@@ -103,7 +103,7 @@ injected failure and console credential delivery.
 **Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: PROV-01, PROV-02, PROV-03, PROV-04, PROV-08, SNAP-01 (table)
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 **Success Criteria** (what must be TRUE):
 
   1. `subscription.activated` opens a `pending` `instance` + a `create` `provisioning_task` and converges `pending → deploying → configuring → ready` via `FakeDeploymentAdapter`; the row ends at `ready` with a populated `url`.
@@ -128,7 +128,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-04-PLAN.md — Full test suite: test_handlers.py updates, test_service.py, test_tasks.py (PROV-04 canonical proof, credential-once, snapshot write), make test + make test-integration green
+- [x] 03-04-PLAN.md — Full test suite: test_handlers.py updates, test_service.py, test_tasks.py (PROV-04 canonical proof, credential-once, snapshot write), make test + make test-integration green
 
 ### Phase 4: Event production (outbox → relay)
 

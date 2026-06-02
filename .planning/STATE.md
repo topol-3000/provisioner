@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
-status: verifying
-last_updated: "2026-06-02T09:25:47.352Z"
+status: gaps_found
+last_updated: "2026-06-02T09:45:00.000Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 1
   total_plans: 6
   completed_plans: 6
-  percent: 40
+  percent: 20
 ---
 
 # Project State
@@ -28,14 +28,18 @@ deployment adapter.
 
 ## Current Position
 
-Phase: 02 (event-consumption-idempotency) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 02 (event-consumption-idempotency) — GAPS FOUND
+Plan: 3 of 3 built
+Status: Verification gaps_found (3/4 must-haves). CONS-03/SC-2 blocker — idempotency
+dedupe guard (shared/event_consumer.py) lacks IntegrityError handling on the
+concurrent/reclaim-race path; uncaught commit crashes the consumer with no XACK.
+Code review CR-01 + verifier both confirmed (probe vs real Postgres). Phase NOT
+complete — next: `/gsd-plan-phase 2 --gaps` to close. See 02-VERIFICATION.md.
 Last activity: 2026-06-02
 Resume file: None
-Stopped at: Completed 02-02-PLAN.md
+Stopped at: 02-03-PLAN.md built; phase verification returned gaps_found
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 3/4 must-haves
 
 ## Notes
 

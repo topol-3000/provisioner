@@ -31,7 +31,7 @@ bearer token + serving `enforcement_snapshot` to a live plugin,
 - Decimal phases (2.1, 2.2): urgent insertions (marked INSERTED).
 
 - [x] **Phase 1: Repo scaffold & worker skeleton** — `pyproject`/`uv.lock`/`Makefile`/CI, the `python -m provisioning_worker` entrypoint (four concerns), typed `Settings`, `/healthz`, the single `provisioning` Alembic tree, structlog/OTel bootstrap (completed 2026-06-01)
-- [x] **Phase 2: Event consumption & idempotency** — the `events.subscription` consumer (`cg.provisioning-convergence`), the re-implemented envelope + `subscription.*` payloads, transactional `processed_event` dedupe, poison-message handling (completed 2026-06-02)
+- [ ] **Phase 2: Event consumption & idempotency** — the `events.subscription` consumer (`cg.provisioning-convergence`), the re-implemented envelope + `subscription.*` payloads, transactional `processed_event` dedupe, poison-message handling (all 3 plans built; verification gaps_found 2026-06-02 — CONS-03 idempotency blocker, see 02-VERIFICATION.md)
 - [ ] **Phase 3: Registry & create-path (fake adapter)** — `provisioning.instance`/`provisioning_task`/`enforcement_snapshot` tables, the `DeploymentAdapter` port + `FakeDeploymentAdapter`, `subscription.activated` → `ready`, `InstanceSpec`, Taskiq retry/backoff, console credential delivery
 - [ ] **Phase 4: Event production (outbox → relay)** — `provisioning.event_outbox` + relay to `events.instance`, the envelope publisher, and `instance.provisioned` emitted atomically on first `ready`
 - [ ] **Phase 5: Full lifecycle convergence** — `lines_changed` / `suspended` / `reinstated` / `cancelled` (incl. `at_period_end` grace), the rest of the `instance.*` catalog, enforcement-snapshot computation/versioning, and observability (metrics) polish

@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
-status: ready_to_plan
-last_updated: 2026-06-02T10:23:31.761Z
-last_activity: 2026-06-02 -- Phase 02 execution started
+status: planning
+last_updated: "2026-06-02T11:21:31.836Z"
+last_activity: 2026-06-02
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
   completed_plans: 7
-  percent: 20
-stopped_at: Phase 02 complete (4/4) — ready to discuss Phase 3
+  percent: 40
 ---
 
 # Project State
@@ -37,8 +36,8 @@ concurrent/reclaim-race path; uncaught commit crashes the consumer with no XACK.
 Code review CR-01 + verifier both confirmed (probe vs real Postgres). Phase NOT
 complete — next: `/gsd-plan-phase 2 --gaps` to close. See 02-VERIFICATION.md.
 Last activity: 2026-06-02
-Resume file: None
-Stopped at: 02-03-PLAN.md built; phase verification returned gaps_found
+Resume file: .planning/phases/03-registry-create-path-fake-adapter/03-CONTEXT.md
+Stopped at: Phase 3 context gathered
 
 Progress: [██████░░░░] 3/4 must-haves
 

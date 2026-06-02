@@ -31,7 +31,7 @@ bearer token + serving `enforcement_snapshot` to a live plugin,
 - Decimal phases (2.1, 2.2): urgent insertions (marked INSERTED).
 
 - [x] **Phase 1: Repo scaffold & worker skeleton** — `pyproject`/`uv.lock`/`Makefile`/CI, the `python -m provisioning_worker` entrypoint (four concerns), typed `Settings`, `/healthz`, the single `provisioning` Alembic tree, structlog/OTel bootstrap (completed 2026-06-01)
-- [ ] **Phase 2: Event consumption & idempotency** — the `events.subscription` consumer (`cg.provisioning-convergence`), the re-implemented envelope + `subscription.*` payloads, transactional `processed_event` dedupe, poison-message handling
+- [x] **Phase 2: Event consumption & idempotency** — the `events.subscription` consumer (`cg.provisioning-convergence`), the re-implemented envelope + `subscription.*` payloads, transactional `processed_event` dedupe, poison-message handling (completed 2026-06-02)
 - [ ] **Phase 3: Registry & create-path (fake adapter)** — `provisioning.instance`/`provisioning_task`/`enforcement_snapshot` tables, the `DeploymentAdapter` port + `FakeDeploymentAdapter`, `subscription.activated` → `ready`, `InstanceSpec`, Taskiq retry/backoff, console credential delivery
 - [ ] **Phase 4: Event production (outbox → relay)** — `provisioning.event_outbox` + relay to `events.instance`, the envelope publisher, and `instance.provisioned` emitted atomically on first `ready`
 - [ ] **Phase 5: Full lifecycle convergence** — `lines_changed` / `suspended` / `reinstated` / `cancelled` (incl. `at_period_end` grace), the rest of the `instance.*` catalog, enforcement-snapshot computation/versioning, and observability (metrics) polish
@@ -84,7 +84,7 @@ parses them into typed models, dedupes replays, and survives malformed messages
   3. A malformed envelope (bad JSON / unknown field) is logged at `error` and `XACK`'d without crashing the consumer; a valid envelope published afterward is still processed.
   4. All five consumed payload models round-trip a platform-api-shaped envelope (verified by unit tests against fixtures matching `docs/events.md`).
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 **Wave 1** *(run in parallel)*
 
@@ -93,7 +93,7 @@ parses them into typed models, dedupes replays, and survives malformed messages
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-03-PLAN.md — Consumer adapter + dedupe guard + wiring: adapters/valkey_streams.py, shared/event_consumer.py, handlers.py (5 no-ops), main.py wiring, integration tests
+- [x] 02-03-PLAN.md — Consumer adapter + dedupe guard + wiring: adapters/valkey_streams.py, shared/event_consumer.py, handlers.py (5 no-ops), main.py wiring, integration tests
 
 ### Phase 3: Registry & create-path (fake adapter)
 

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
-status: executing
-last_updated: "2026-06-02T09:08:27.542Z"
+status: verifying
+last_updated: "2026-06-02T09:25:47.352Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 5
-  percent: 20
+  completed_plans: 6
+  percent: 40
 ---
 
 # Project State
@@ -30,12 +30,12 @@ deployment adapter.
 
 Phase: 02 (event-consumption-idempotency) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-02
 Resume file: None
 Stopped at: Completed 02-02-PLAN.md
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100%
 
 ## Notes
 
@@ -58,8 +58,10 @@ Progress: [████████░░] 83%
 | Phase 01 P02 | 811 | 2 tasks | 31 files |
 | Phase 02 P01 | 25m | 2 tasks | 7 files |
 | Phase Phase 02 P02 P15m | 2 tasks | 5 files tasks | - files |
+| Phase 02 P03 | ~40m | 2 tasks | 7 files |
 
 ## Decisions
 
 - [Phase ?]: Phase 2 Plan 1: EventEnvelope re-implemented consume-only (no build, D-03); five subscription.* payloads with plain Decimal (D-04); envelope type:str for forward-compat (D-05); EventConsumer Protocol is the consume-side seam (D-01)
 - [Phase ?]: Phase 2 Plan 2: ProcessedEvent ORM on provisioning.processed_event with composite PK (event_id VARCHAR(26), consumer_group TEXT) + processed_at TIMESTAMPTZ (D-07, first table in single Alembic tree); consumer_reclaim_min_idle_ms Settings tunable default 60_000 ge 1_000 backing XAUTOCLAIM (D-08); env.py target_metadata=Base.metadata enables autogenerate
+- [Phase ?]: Phase 2 Plan 3: ValkeyStreamsConsumer is the sole redis.asyncio consume site (D-01); commit-then-ack — processed_event insert + handler in one session_scope, XACK after the dedupe-wrapped handler returns (D-06); poison -> error+ack+no-row vs unknown-type -> warning+ack+no-row (D-05); XAUTOCLAIM every 60 cycles, 3-element unpack, same dispatch path (D-08); handlers dispatched PRE-WRAPPED via make_handler_registry (no double-wrap)

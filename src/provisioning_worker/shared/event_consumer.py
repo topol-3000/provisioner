@@ -19,9 +19,17 @@ guarantee real:
 - Crash before commit → message re-delivered → reprocesses cleanly.
 - Crash after commit, before ``XACK`` → message re-delivered → the existing
   ``processed_event`` row causes the guard to short-circuit; no double-effect.
+
+Post-commit enqueue pattern (Pitfall 1 mitigation):
+Handlers must NOT call ``broker.task.kiq()`` before returning — the session
+commit has not happened yet. Instead, handlers call :func:`register_post_commit`
+to register a callback; :func:`handle_with_dedupe` drains all registered
+callbacks **after** ``session.commit()`` succeeds. This guarantees a Taskiq
+job is never enqueued against a row that doesn't exist in the DB yet.
 """
 
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 import structlog
@@ -36,14 +44,41 @@ if TYPE_CHECKING:
 
     from provisioning_worker.ports.event_consumer import HandlerFn
 
-__all__ = ["handle_with_dedupe", "make_handler_registry"]
+__all__ = ["handle_with_dedupe", "make_handler_registry", "register_post_commit"]
 
 log = structlog.get_logger(__name__)
+
+# Post-commit enqueue queue (Pitfall 1 fix, T-3-11 mitigation).
+# Handlers append callbacks here; handle_with_dedupe drains after commit.
+# Default is None; handle_with_dedupe resets to [] at the start of each
+# invocation to prevent cross-invocation bleed. None is used instead of []
+# to satisfy B039 (mutable ContextVar default).
+_POST_COMMIT_ENQUEUE: ContextVar[list[Callable[[], Awaitable[None]]] | None] = ContextVar(
+    "_POST_COMMIT_ENQUEUE", default=None
+)
 
 # A raw handler takes the open session as a third argument; the dedupe wrapper
 # supplies it. The adapter-facing wrapped handler (HandlerFn) is (raw_env,
 # payload) -> Awaitable[None].
 type RawHandlerFn = Callable[[object, object, AsyncSession], Awaitable[None]]
+
+
+def register_post_commit(callback: Callable[[], Awaitable[None]]) -> None:
+    """Register a callback to be drained after ``session.commit()`` succeeds.
+
+    Handlers must call this instead of enqueuing Taskiq jobs directly (Pitfall 1
+    fix, T-3-11 mitigation). The callback is appended to the current invocation's
+    post-commit queue; :func:`handle_with_dedupe` drains the queue after the
+    session commits.
+
+    Calling this before ``handle_with_dedupe`` has been entered (outside a
+    handler invocation) is safe but the callback will never be drained.
+
+    Args:
+        callback: An async callable with no arguments to invoke after commit.
+    """
+    current = _POST_COMMIT_ENQUEUE.get() or []
+    _POST_COMMIT_ENQUEUE.set([*current, callback])
 
 
 async def handle_with_dedupe(
@@ -68,6 +103,11 @@ async def handle_with_dedupe(
     In both cases the function returns normally; the caller must ``XACK`` only
     **after** this coroutine returns (commit-then-ack). This function never acks.
 
+    After ``session.commit()`` succeeds, any callbacks registered via
+    :func:`register_post_commit` are drained in registration order. This
+    satisfies T-3-11: post-commit enqueue callbacks run only after the DB
+    transaction is durable.
+
     Args:
         raw_env: The validated inbound envelope (must expose ``id``).
         payload: The type-resolved payload model passed through to the handler.
@@ -76,6 +116,10 @@ async def handle_with_dedupe(
         consumer_group: The consumer-group name forming the second half of the
             composite dedupe key.
     """
+    # Reset post-commit queue for this invocation (prevent cross-invocation bleed).
+    # Use a fresh list each time rather than clearing in-place (ContextVar isolation).
+    _POST_COMMIT_ENQUEUE.set([])
+
     async with session_scope() as session:
         existing = await _select_processed_event(session, raw_env.id, consumer_group)
         if existing is not None:
@@ -90,6 +134,10 @@ async def handle_with_dedupe(
             await session.rollback()
             log.debug("dedupe conflict — concurrent duplicate", envelope_id=raw_env.id)
             return
+
+    # Drain post-commit callbacks (T-3-11: only after successful commit).
+    for callback in _POST_COMMIT_ENQUEUE.get() or []:
+        await callback()
 
 
 def make_handler_registry(

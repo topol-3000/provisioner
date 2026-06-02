@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
-status: ready_to_plan
-last_updated: 2026-06-01T16:18:53.934Z
+status: planning
+last_updated: "2026-06-02T07:22:48.077Z"
 last_activity: 2026-06-01
 progress:
   total_phases: 5
@@ -11,7 +11,6 @@ progress:
   total_plans: 3
   completed_plans: 3
   percent: 20
-stopped_at: Phase 01 complete (3/3) — ready to discuss Phase 2
 ---
 
 # Project State
@@ -33,8 +32,8 @@ Phase: 2
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-01
-Resume file: None
-Stopped at: Phase 1 context gathered (15 decisions D-01..D-15; mirror platform-api for Docker/CI/Settings/OTel)
+Resume file: .planning/phases/02-event-consumption-idempotency/02-CONTEXT.md
+Stopped at: Phase 2 context gathered
 
 Progress: [██████████] 100%
 

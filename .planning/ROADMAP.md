@@ -84,6 +84,17 @@ parses them into typed models, dedupes replays, and survives malformed messages
   3. A malformed envelope (bad JSON / unknown field) is logged at `error` and `XACK`'d without crashing the consumer; a valid envelope published afterward is still processed.
   4. All five consumed payload models round-trip a platform-api-shaped envelope (verified by unit tests against fixtures matching `docs/events.md`).
 
+**Plans:** 3 plans
+
+**Wave 1** *(run in parallel)*
+
+- [ ] 02-01-PLAN.md — Event models + registry + EventConsumer port: events/envelope.py, events/subscription.py, events/__init__.py, ports/event_consumer.py, tests/events/
+- [ ] 02-02-PLAN.md — ProcessedEvent ORM + Alembic migration + settings: models.py, migration add_processed_event, env.py update, settings.consumer_reclaim_min_idle_ms
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-03-PLAN.md — Consumer adapter + dedupe guard + wiring: adapters/valkey_streams.py, shared/event_consumer.py, handlers.py (5 no-ops), main.py wiring, integration tests
+
 ### Phase 3: Registry & create-path (fake adapter)
 
 **Goal**: A `subscription.activated` event drives a real `provisioning.instance`

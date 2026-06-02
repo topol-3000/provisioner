@@ -1267,7 +1267,7 @@ is Claude's discretion per the context decisions.
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`XAUTOCLAIM` cadence: every-N-cycles vs a separate `asyncio.sleep` timer?**
    - What we know: D-08 says "periodic, shared path" is locked; cadence/period is discretion.
@@ -1276,6 +1276,8 @@ is Claude's discretion per the context decisions.
      but adds complexity.
    - Recommendation: Start with every-N-cycles (simpler, auditable). Revisit if cadence needs
      to be independent of poll load.
+   - **RESOLVED:** every-N-cycles chosen per plan 02-03 Task 2 (`_reclaim_every_n = 60`,
+     ~60s cadence at block=1000ms).
 
 2. **Should `handlers.py` receive the full `EventEnvelope[P]` or just the typed payload?**
    - What we know: Handlers need `envelope_id`, `subscription_id`, `correlation_id` for
@@ -1285,6 +1287,8 @@ is Claude's discretion per the context decisions.
    - Recommendation: Pass the full typed envelope (or a simple handler context dataclass
      carrying `envelope_id`, `correlation_id`, and the typed payload). Avoids leaking
      envelope internals into Phase 3 handler bodies.
+   - **RESOLVED:** raw envelope + typed payload + session signature chosen per plan 02-03
+     Task 1 (`(raw_env, payload, session: AsyncSession)`).
 
 ---
 

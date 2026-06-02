@@ -14,7 +14,9 @@ unchanged (D-02 design invariant).
 M1 entitlement picture:
 - ``module_set``: empty tuple (base Odoo modules only).
 - ``seat_cap``: ``settings.provisioning_default_seat_cap`` (D-03).
-- ``resource_caps``: empty dict.
+- ``resource_caps``: ``settings.default_resource_caps`` (parsed from the
+  ``provisioning_default_resource_caps`` JSON-string setting; empty by
+  default). WR-02 fix — the setting is no longer dead configuration.
 """
 
 from typing import TYPE_CHECKING
@@ -58,11 +60,14 @@ class DefaultEntitlementResolver:
 
         Returns:
             An ``EntitlementPicture`` with empty module set, settings-sourced
-            seat cap, and empty resource caps.
+            seat cap, and the settings-sourced default resource caps.
         """
         # M1 placeholder: uses settings default, ignores payload.line_count (D-03)
+        # WR-02: resource_caps now come from settings.default_resource_caps
+        # (parsed from the provisioning_default_resource_caps JSON setting)
+        # instead of being hard-coded to {}.
         return EntitlementPicture(
             module_set=(),
             seat_cap=settings.provisioning_default_seat_cap,
-            resource_caps={},
+            resource_caps=settings.default_resource_caps,
         )

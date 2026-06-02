@@ -8,6 +8,7 @@ hermetic and adapters swappable.
 See `.env.example` for the full set of recognised variables.
 """
 
+import json
 from functools import lru_cache
 from typing import Literal
 
@@ -125,6 +126,28 @@ class Settings(BaseSettings):
     def otel_enabled(self) -> bool:
         """Return True when an OTLP endpoint is configured."""
         return self.otel_exporter_otlp_endpoint is not None
+
+    @property
+    def default_resource_caps(self) -> dict[str, object]:
+        """Parse ``provisioning_default_resource_caps`` (JSON string) to a dict.
+
+        WR-02: this is the single parse site for the JSON-string setting. The
+        entitlement resolver reads this property so an operator-supplied value
+        actually takes effect (the setting was previously dead configuration).
+
+        Returns:
+            The decoded mapping. Empty dict when unset (default ``"{}"``).
+
+        Raises:
+            ValueError: If the configured value is not a JSON object.
+        """
+        parsed = json.loads(self.provisioning_default_resource_caps)
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                "provisioning_default_resource_caps must be a JSON object, "
+                f"got {type(parsed).__name__}"
+            )
+        return parsed
 
 
 @lru_cache(maxsize=1)

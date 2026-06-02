@@ -242,6 +242,9 @@ def test_default_resolver_returns_empty_module_set() -> None:
     payload = MagicMock()
     settings = MagicMock()
     settings.provisioning_default_seat_cap = 10
+    # WR-02: the resolver now reads settings.default_resource_caps instead of
+    # hard-coding {}; supply the parsed default explicitly on the mock.
+    settings.default_resource_caps = {}
 
     result = resolver.resolve(payload, settings)
     assert result.module_set == ()

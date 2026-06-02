@@ -18,6 +18,7 @@ owns the transaction boundary.
 """
 
 from typing import TYPE_CHECKING
+from uuid import uuid7
 
 import structlog
 
@@ -118,7 +119,13 @@ class ProvisioningService:
         entitlement = self._entitlement_resolver.resolve(payload, settings)
         spec = build_instance_spec(payload, settings, entitlement)
 
+        # Pre-generate the instance UUID so it is available immediately for
+        # the FK in ProvisioningTask. SQLAlchemy's column default (uuid7) fires
+        # at flush time, not at object construction — so instance.id would be
+        # None if we relied on the default before the first flush.
+        instance_id = uuid7()
         instance = Instance(
+            id=instance_id,
             subscription_id=payload.subscription_id,
             customer_id=payload.customer_id,
             status=InstanceStatus.pending,
@@ -128,7 +135,7 @@ class ProvisioningService:
             version=1,
         )
         task = ProvisioningTask(
-            instance_id=instance.id,
+            instance_id=instance_id,
             task_type=TaskType.create,
             status=ProvisioningTaskStatus.pending,
             source_event_id=source_event_id,

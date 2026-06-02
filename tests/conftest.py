@@ -68,23 +68,31 @@ async def pg_engine(postgres_container: PostgresContainer) -> AsyncIterator[Asyn
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS provisioning"))
         # ENUM types must be created before create_all because ORM columns use
         # create_type=False (T-3-01 mitigation — avoids "type already exists" errors).
+        # Use DO $$ ... $$ blocks because CREATE TYPE does not support IF NOT EXISTS
+        # in any Postgres version (unlike CREATE TABLE).
         await conn.execute(
             text(
-                "CREATE TYPE IF NOT EXISTS provisioning.instance_status AS ENUM ("
+                "DO $$ BEGIN "
+                "CREATE TYPE provisioning.instance_status AS ENUM ("
                 "'pending', 'deploying', 'configuring', 'ready', "
-                "'suspended', 'failed', 'deprovisioning', 'deprovisioned')"
+                "'suspended', 'failed', 'deprovisioning', 'deprovisioned');"
+                " EXCEPTION WHEN duplicate_object THEN NULL; END $$"
             )
         )
         await conn.execute(
             text(
-                "CREATE TYPE IF NOT EXISTS provisioning.task_type AS ENUM ("
-                "'create', 'update', 'suspend', 'reinstate', 'delete')"
+                "DO $$ BEGIN "
+                "CREATE TYPE provisioning.task_type AS ENUM ("
+                "'create', 'update', 'suspend', 'reinstate', 'delete');"
+                " EXCEPTION WHEN duplicate_object THEN NULL; END $$"
             )
         )
         await conn.execute(
             text(
-                "CREATE TYPE IF NOT EXISTS provisioning.task_status AS ENUM ("
-                "'pending', 'running', 'succeeded', 'failed')"
+                "DO $$ BEGIN "
+                "CREATE TYPE provisioning.task_status AS ENUM ("
+                "'pending', 'running', 'succeeded', 'failed');"
+                " EXCEPTION WHEN duplicate_object THEN NULL; END $$"
             )
         )
         await conn.run_sync(Base.metadata.create_all)

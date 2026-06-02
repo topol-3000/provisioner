@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     # ----- Valkey consumer -----
     provisioning_consumer_group: str = "cg.provisioning-convergence"
     consumer_name: str = "worker-1"
+    consumer_reclaim_min_idle_ms: int = Field(
+        default=60_000,
+        ge=1_000,
+        description=(
+            "XAUTOCLAIM min-idle-time in milliseconds. Entries idle longer "
+            "than this are reclaimed. Default ~60s."
+        ),
+    )
 
     # ----- Adapters -----
     deployment_adapter: Literal["fake", "coolify"] = "fake"

@@ -5,7 +5,7 @@ status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-06-01
-validated: 2026-06-01
+validated: 2026-06-02
 ---
 
 # Phase 1 — Validation Strategy
@@ -129,3 +129,23 @@ already green) and filled the 4 genuine gaps:
   closing T-2 (fail-fast, no silent default) and removing the committed `platform_dev_password`
   literal from source. (Note: `platform-api` still carries the same defaults; this intentionally
   diverges. Consider mirroring the fix there and running `/gsd-secure-phase 01` to record T-2.)
+
+---
+
+## Validation Audit 2026-06-02
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+| Manual-only (carried) | 3 |
+
+Re-validation of an already-compliant phase. The 2026-06-01 audit's work holds:
+all 7 automated tests named in the Per-Requirement map exist and run green
+(`.venv/bin/pytest -m "not integration"` → **14 passed in 1.29s**). Confirmed the
+requirement set is complete against `ROADMAP.md` (SCAF-01..05, OBS-01 — all six
+mapped). No MISSING or PARTIAL rows; no new gaps introduced since the last audit.
+The three manual-only verifications (CI runner, live `make migrate`, literal OS
+exit-0 on `make run` drain) remain legitimately out of the Docker-free unit suite.
+`nyquist_compliant` stays `true`.

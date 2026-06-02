@@ -103,7 +103,7 @@ injected failure and console credential delivery.
 **Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: PROV-01, PROV-02, PROV-03, PROV-04, PROV-08, SNAP-01 (table)
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 **Success Criteria** (what must be TRUE):
 
   1. `subscription.activated` opens a `pending` `instance` + a `create` `provisioning_task` and converges `pending → deploying → configuring → ready` via `FakeDeploymentAdapter`; the row ends at `ready` with a populated `url`.
@@ -116,7 +116,7 @@ Plans:
 
 **Wave 0** *(contracts, schema, test scaffolds)*
 
-- [ ] 03-01-PLAN.md — DB schema (models.py extend + Alembic migration) + ports (4 Protocols) + shared/errors.py + schemas.py + spec.py + conftest ENUM fix + test_models.py/test_spec.py Wave 0 assertions
+- [x] 03-01-PLAN.md — DB schema (models.py extend + Alembic migration) + ports (4 Protocols) + shared/errors.py + schemas.py + spec.py + conftest ENUM fix + test_models.py/test_spec.py Wave 0 assertions
 
 **Wave 1** *(blocked on Wave 0 completion)*
 

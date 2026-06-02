@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
 status: executing
-last_updated: "2026-06-02T12:27:13.804Z"
-last_activity: 2026-06-02 -- Phase 03 planning complete
+last_updated: "2026-06-02T12:43:00.868Z"
+last_activity: 2026-06-02
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 11
-  completed_plans: 7
+  completed_plans: 8
   percent: 40
 ---
 
@@ -23,23 +23,23 @@ See: .planning/PROJECT.md (created 2026-06-01)
 Odoo instance — automatically, idempotently, and observably — by consuming
 `subscription.*` lifecycle events and converging the instance through a pluggable
 deployment adapter.
-**Current focus:** Phase 3 — registry & create path (fake adapter)
+**Current focus:** Phase 03 — registry-create-path-fake-adapter
 `FakeDeploymentAdapter` (no Coolify, no real Odoo). Phase 1 — repo scaffold & worker skeleton.
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
+Phase: 03 (registry-create-path-fake-adapter) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
 dedupe guard (shared/event_consumer.py) lacks IntegrityError handling on the
 concurrent/reclaim-race path; uncaught commit crashes the consumer with no XACK.
 Code review CR-01 + verifier both confirmed (probe vs real Postgres). Phase NOT
 complete — next: `/gsd-plan-phase 2 --gaps` to close. See 02-VERIFICATION.md.
-Last activity: 2026-06-02 -- Phase 03 planning complete
-Resume file: .planning/phases/03-registry-create-path-fake-adapter/03-CONTEXT.md
+Last activity: 2026-06-02
+Resume file: None
 Stopped at: Phase 3 context gathered
 
-Progress: [██████░░░░] 3/4 must-haves
+Progress: [███████░░░] 73%
 
 ## Notes
 

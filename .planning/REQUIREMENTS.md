@@ -63,14 +63,14 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
 
 ### Registry, convergence & deployment adapter
 
-- [ ] **PROV-01**: The `provisioning.instance` and `provisioning.provisioning_task`
+- [x] **PROV-01**: The `provisioning.instance` and `provisioning.provisioning_task`
   tables exist (Alembic), with `instance` shaped to the read model platform-api
   documents (`docs/architecture.md` §Postgres schema). `subscription_id` is
   unique (1:1:1).
 - [ ] **PROV-02**: `subscription.activated` creates an `instance` row (`pending`)
   + a `create` task and converges `pending → deploying → configuring → ready`
   against the `DeploymentAdapter` port via `FakeDeploymentAdapter`.
-- [ ] **PROV-03**: An `InstanceSpec` builder (`spec.py`) turns the entitlement
+- [x] **PROV-03**: An `InstanceSpec` builder (`spec.py`) turns the entitlement
   picture (module set, seat cap, resource caps) into the orchestrator-agnostic
   spec; the entitlement-resolution approach (reconstruct-from-deltas vs
   read-back) is decided and documented (`docs/events.md` §Resolving
@@ -93,7 +93,7 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
 
 ### Enforcement snapshot
 
-- [ ] **SNAP-01**: The `provisioning.enforcement_snapshot` table exists and a
+- [x] **SNAP-01**: The `provisioning.enforcement_snapshot` table exists and a
   versioned snapshot (`module_set`, `seat_cap`, `resource_caps`,
   `feature_flags`, monotonic `version`) is computed on convergence. (Serving it
   to a live Odoo plugin is milestone 2; the table + computation exist in M1 so

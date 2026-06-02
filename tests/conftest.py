@@ -56,10 +56,12 @@ async def pg_engine(postgres_container: PostgresContainer) -> AsyncIterator[Asyn
 
 @pytest.fixture
 async def pg_session(pg_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
-    """Yield a function-scoped async session; roll back after the test.
+    """Yield a function-scoped async session; truncate tables after the test.
 
-    Rolling back after yield keeps tests isolated even though they share the
-    session-scoped engine and tables.
+    Tests that commit (the idempotency guard commits its ``processed_event``
+    row) make rows durable, so a plain rollback is not enough to isolate them.
+    After each test the session rolls back any open transaction and truncates
+    the mapped tables so the next test starts from an empty schema.
     """
     factory = async_sessionmaker(pg_engine, expire_on_commit=False)
     async with factory() as session:
@@ -67,3 +69,8 @@ async def pg_session(pg_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
             yield session
         finally:
             await session.rollback()
+            for table in reversed(Base.metadata.sorted_tables):
+                await session.execute(
+                    text(f'TRUNCATE TABLE "{table.schema}"."{table.name}" CASCADE')
+                )
+            await session.commit()

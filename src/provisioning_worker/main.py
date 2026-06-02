@@ -14,11 +14,14 @@ import structlog
 from sqlalchemy import text
 from taskiq_redis import RedisStreamBroker
 
+from provisioning_worker.adapters.valkey_streams import ValkeyStreamsConsumer
 from provisioning_worker.infrastructure.db import dispose_engine, get_engine
 from provisioning_worker.infrastructure.health_server import run_health_server
 from provisioning_worker.infrastructure.logging import configure_logging
 from provisioning_worker.infrastructure.observability import configure_tracing
 from provisioning_worker.infrastructure.outbox_relay import run_outbox_relay
+from provisioning_worker.modules.provisioning import handlers
+from provisioning_worker.shared.event_consumer import make_handler_registry
 
 if TYPE_CHECKING:
     from provisioning_worker.settings import Settings
@@ -75,57 +78,37 @@ async def run(settings: Settings) -> None:
 
 
 async def _run_consumer(settings: Settings, shutdown: asyncio.Event) -> None:
-    """Run the Valkey Streams consumer loop (no-op Phase 1).
+    """Run the Valkey Streams consumer (Phase 2 real dispatch).
 
-    Creates the consumer group idempotently (tolerating BUSYGROUP on
-    restart), enters the XREADGROUP loop with a 1-second block timeout,
-    dispatches received messages to a no-op handler, and exits when
-    `shutdown` is set. Phase 2 replaces the no-op with real dispatch.
+    Wires the :class:`ValkeyStreamsConsumer` adapter to the five
+    ``subscription.*`` handlers, each wrapped by the idempotency dedupe guard
+    via :func:`make_handler_registry`. Joins the consumer group, runs the
+    XREADGROUP poll loop (with periodic XAUTOCLAIM reclaim) until `shutdown` is
+    set, then releases the connection pool.
 
     Args:
-        settings: Application settings — supplies consumer group name,
-            consumer name, and Valkey URL.
+        settings: Application settings — supplies the Valkey URL, consumer
+            group, consumer name, and reclaim window.
         shutdown: Event set by the composition root on SIGTERM.
     """
-    client = aioredis.from_url(str(settings.valkey_url), decode_responses=True)
+    consumer = ValkeyStreamsConsumer(settings)
+    await consumer.start()
 
-    try:
-        await client.xgroup_create(
-            name="events.subscription",
-            groupname=settings.provisioning_consumer_group,
-            id="0",
-            mkstream=True,
-        )
-    except aioredis.ResponseError as exc:
-        if "BUSYGROUP" not in str(exc):
-            raise
-
-    log.info(
-        "joined consumer group",
-        group=settings.provisioning_consumer_group,
-        stream="events.subscription",
-        consumer=settings.consumer_name,
+    handler_map = make_handler_registry(
+        settings.provisioning_consumer_group,
+        {
+            "subscription.activated": handlers.handle_subscription_activated,
+            "subscription.lines_changed": handlers.handle_subscription_lines_changed,
+            "subscription.suspended": handlers.handle_subscription_suspended,
+            "subscription.reinstated": handlers.handle_subscription_reinstated,
+            "subscription.cancelled": handlers.handle_subscription_cancelled,
+        },
     )
 
-    while not shutdown.is_set():
-        results = await client.xreadgroup(
-            groupname=settings.provisioning_consumer_group,
-            consumername=settings.consumer_name,
-            streams={"events.subscription": ">"},
-            count=10,
-            block=1000,
-        )
-        if results:
-            for _stream, messages in results:
-                for msg_id, _fields in messages:
-                    log.debug("received event (no-op)", msg_id=msg_id)
-                    await client.xack(
-                        "events.subscription",
-                        settings.provisioning_consumer_group,
-                        msg_id,
-                    )
-
-    await client.aclose()
+    try:
+        await consumer.run(handler_map, shutdown)
+    finally:
+        await consumer.close()
 
 
 async def _run_convergence(settings: Settings, shutdown: asyncio.Event) -> None:

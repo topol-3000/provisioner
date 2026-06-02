@@ -30,6 +30,7 @@ from provisioning_worker.modules.provisioning import handlers
 from provisioning_worker.modules.provisioning.models import (
     ProvisioningTask,
     ProvisioningTaskStatus,
+    TaskType,
 )
 from provisioning_worker.modules.provisioning.service import ProvisioningService
 
@@ -222,10 +223,25 @@ async def _recover_overdue_tasks() -> None:
     if overdue_tasks:
         log.info("boot recovery: re-kicking overdue tasks", count=len(overdue_tasks))
         for task in overdue_tasks:
+            # WR-01: dispatch by task_type. Today only `create` exists; any
+            # other type (update/suspend/reinstate/delete) has no task class
+            # yet, so re-kicking it as a create would silently corrupt
+            # convergence. Skip + warn until those task classes land (Phase 5).
+            if task.task_type is not TaskType.create:
+                log.warning(
+                    "boot recovery: skipping overdue task of unsupported type — "
+                    "no task class exists for it yet",
+                    task_id=str(task.id),
+                    instance_id=str(task.instance_id),
+                    task_type=task.task_type.value,
+                    status=task.status.value,
+                )
+                continue
             log.info(
                 "re-kicking overdue task",
                 task_id=str(task.id),
                 instance_id=str(task.instance_id),
+                task_type=task.task_type.value,
                 status=task.status.value,
             )
             await create_instance_task.kiq(str(task.instance_id), str(task.id))

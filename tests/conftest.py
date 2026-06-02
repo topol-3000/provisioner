@@ -11,10 +11,14 @@ Phase 3 additions:
 - ENUM type creation before ``Base.metadata.create_all`` (required because ORM
   columns use ``create_type=False``).
 - ``fake_clock`` fixture for ``FakeClock`` (deterministic time in unit tests).
-- ``in_memory_broker`` fixture stub (full wiring in Plan 02 once adapters are
-  available).
+- ``in_memory_broker`` fixture: InMemoryBroker wired with FakeDeploymentAdapter,
+  FakeClock, spy ConsoleNotificationTransport, test Settings, and
+  ProvisioningService for full convergence-path integration tests.
+- ``spy_console_transport`` fixture: AsyncMock-wrapped ConsoleNotificationTransport
+  for asserting credential-delivery call counts.
 """
 
+from unittest.mock import AsyncMock
 from typing import TYPE_CHECKING
 
 import pytest
@@ -27,8 +31,14 @@ from sqlalchemy.ext.asyncio import (
 )
 from testcontainers.postgres import PostgresContainer
 
+from provisioning_worker.adapters.fake_deployment import FakeDeploymentAdapter
+from provisioning_worker.adapters.m1_entitlement_resolver import DefaultEntitlementResolver
 from provisioning_worker.modules.provisioning.models import Base
+from provisioning_worker.modules.provisioning.service import ProvisioningService
 from provisioning_worker.ports.clock import FakeClock
+from provisioning_worker.ports.deployment_adapter import DeploymentAdapter
+from provisioning_worker.ports.notification_transport import NotificationTransport
+from provisioning_worker.settings import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -114,3 +124,67 @@ def fake_clock() -> FakeClock:
     paths execute without real delays in unit tests.
     """
     return FakeClock()
+
+
+@pytest.fixture
+def spy_console_transport() -> AsyncMock:
+    """AsyncMock that records ``send_credentials`` calls without printing.
+
+    Used to assert credential-delivery call counts without writing to stdout.
+    The mock is a structural ``NotificationTransport`` — it has
+    ``send_credentials`` as an awaitable coroutine attribute.
+    """
+    mock = AsyncMock()
+    mock.send_credentials = AsyncMock()
+    return mock
+
+
+def _make_test_settings() -> Settings:
+    """Return minimal Settings for broker dependency injection."""
+    return Settings(
+        database_url="postgresql+psycopg://test:test@localhost:5432/test",  # type: ignore[arg-type]
+        database_url_sync="postgresql+psycopg://test:test@localhost:5432/test",  # type: ignore[arg-type]
+        valkey_url="redis://localhost:6379/0",  # type: ignore[arg-type]
+    )
+
+
+@pytest.fixture
+def in_memory_broker(spy_console_transport: AsyncMock):
+    """InMemoryBroker wired with test dependencies; executes tasks synchronously.
+
+    Provides a fully-wired Taskiq ``InMemoryBroker`` with:
+    - ``FakeDeploymentAdapter()`` (no fault injection — succeeds all calls)
+    - ``FakeClock()`` (no-op sleep, deterministic time)
+    - ``spy_console_transport`` (AsyncMock; records send_credentials calls)
+    - Test ``Settings`` with minimal valid env vars
+    - ``ProvisioningService`` with M1 placeholder resolver
+
+    The broker executes tasks inline (``await_inplace=True``) so
+    ``create_instance_task.kiq(...)`` runs to completion before the caller
+    continues. ``propagate_exceptions=True`` surfaces task failures directly
+    in the test.
+
+    Note:
+        For fault-injection tests construct ``FakeDeploymentAdapter(fail_on=…)``
+        inline and build a separate broker — do not use this fixture.
+    """
+    from taskiq import InMemoryBroker
+
+    from provisioning_worker.ports.clock import Clock
+
+    broker = InMemoryBroker(await_inplace=True, propagate_exceptions=True)
+    test_settings = _make_test_settings()
+    service = ProvisioningService(entitlement_resolver=DefaultEntitlementResolver())
+    broker.add_dependency_context(
+        {
+            Settings: test_settings,
+            DeploymentAdapter: FakeDeploymentAdapter(),
+            NotificationTransport: spy_console_transport,
+            Clock: FakeClock(),
+            ProvisioningService: service,
+        }
+    )
+    # Import tasks module so @async_shared_broker.task decorators are registered.
+    import provisioning_worker.modules.provisioning.tasks  # noqa: F401
+
+    return broker

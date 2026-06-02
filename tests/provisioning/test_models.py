@@ -3,8 +3,16 @@
 Pins the `ProcessedEvent` idempotency-ledger mapping and the Phase 3
 registry tables (`Instance`, `ProvisioningTask`, `EnforcementSnapshot`):
 table names, schemas, column sets, PKs, FKs, and UNIQUE constraints.
-All tests are pure metadata inspections — no database required.
+Unit tests are pure metadata inspections — no database required.
+Integration tests (marked ``@pytest.mark.integration``) require a real
+Postgres container via the ``pg_session`` fixture.
 """
+
+from uuid import UUID
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from provisioning_worker.modules.provisioning.models import (
     Base,
@@ -187,3 +195,68 @@ def test_base_metadata_includes_new_tables() -> None:
     assert "provisioning.instance" in tables
     assert "provisioning.provisioning_task" in tables
     assert "provisioning.enforcement_snapshot" in tables
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (require real Postgres via pg_session fixture)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_uuid_pk_version(pg_session) -> None:
+    """Instance.id is a UUID v7 (PROV-01, RESEARCH.md Pitfall 7).
+
+    Python 3.14 stdlib ``uuid.uuid7()`` default is used; version must be 7.
+    """
+    instance = Instance(
+        subscription_id=UUID("018efa2c-0000-7000-8000-100000000001"),
+        customer_id=UUID("018efa2c-0000-7000-8000-200000000001"),
+        status=InstanceStatus.pending,
+        admin_email="test@example.com",
+        desired_seat_cap=10,
+        desired_resource_caps={},
+        version=1,
+    )
+    pg_session.add(instance)
+    await pg_session.commit()
+
+    result = await pg_session.execute(select(Instance).where(Instance.id == instance.id))
+    persisted = result.scalar_one_or_none()
+    assert persisted is not None
+    assert isinstance(persisted.id, UUID)
+    assert persisted.id.version == 7
+
+
+@pytest.mark.integration
+async def test_subscription_id_unique_violation(pg_session) -> None:
+    """Two Instance rows with the same subscription_id raise IntegrityError (PROV-01).
+
+    Verifies the UNIQUE constraint on ``provisioning.instance.subscription_id``
+    that enforces the 1:1:1 subscription-to-instance invariant.
+    """
+    shared_sub_id = UUID("018efa2c-0000-7000-8000-100000000002")
+
+    first = Instance(
+        subscription_id=shared_sub_id,
+        customer_id=UUID("018efa2c-0000-7000-8000-200000000001"),
+        status=InstanceStatus.pending,
+        admin_email="first@example.com",
+        desired_seat_cap=10,
+        desired_resource_caps={},
+        version=1,
+    )
+    pg_session.add(first)
+    await pg_session.commit()
+
+    second = Instance(
+        subscription_id=shared_sub_id,  # duplicate — must violate UNIQUE
+        customer_id=UUID("018efa2c-0000-7000-8000-200000000002"),
+        status=InstanceStatus.pending,
+        admin_email="second@example.com",
+        desired_seat_cap=10,
+        desired_resource_caps={},
+        version=1,
+    )
+    pg_session.add(second)
+    with pytest.raises(IntegrityError):
+        await pg_session.commit()

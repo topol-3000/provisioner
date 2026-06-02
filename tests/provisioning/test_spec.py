@@ -132,6 +132,23 @@ def test_deployment_failed_is_provisioning_error() -> None:
     assert isinstance(exc, ProvisioningError) is True
 
 
+def test_spec_resource_caps_is_mapping() -> None:
+    """resource_caps is a Mapping — an immutable view, not a plain dict."""
+    from collections.abc import Mapping
+
+    settings = _make_settings()
+    payload = _make_payload()
+    entitlement = EntitlementPicture(
+        module_set=(),
+        seat_cap=_DEFAULT_SEAT_CAP,
+        resource_caps={"cpu": 2},
+    )
+
+    spec = build_instance_spec(payload, settings, entitlement)
+
+    assert isinstance(spec.resource_caps, Mapping)
+
+
 def test_instance_spec_round_trip() -> None:
     """InstanceSpec.to_dict() / from_dict() is a lossless round-trip.
 

@@ -10,6 +10,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from provisioning_worker.modules.provisioning.models import Base
 from provisioning_worker.settings import get_settings
 
 # This is the schema this tree owns. The version table lives here too.
@@ -23,8 +24,9 @@ if config.config_file_name is not None:
 # Inject the sync DSN from settings. We always use the sync URL for Alembic.
 config.set_main_option("sqlalchemy.url", str(get_settings().database_url_sync))
 
-# Phase 1: no SQLAlchemy models yet. Phase 3 will import metadata from models.py.
-target_metadata = None
+# Metadata for autogenerate — every mapped class in the provisioning schema
+# registers against Base.metadata (see modules/provisioning/models.py).
+target_metadata = Base.metadata
 
 
 def _include_object(object, name, type_, reflected, compare_to):

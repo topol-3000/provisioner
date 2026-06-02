@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _DEFAULT_HEALTH_PORT = 8001
+_DEFAULT_RECLAIM_MIN_IDLE_MS = 60_000
 
 
 def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,6 +71,29 @@ def test_missing_required_var(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_consumer_reclaim_min_idle_ms_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """consumer_reclaim_min_idle_ms defaults to ~60s (D-08)."""
+    monkeypatch.delenv("CONSUMER_RECLAIM_MIN_IDLE_MS", raising=False)
+
+    settings = Settings(
+        database_url="postgresql+psycopg://u:p@localhost:5432/db",  # type: ignore[arg-type]
+        database_url_sync="postgresql+psycopg://u:p@localhost:5432/db",  # type: ignore[arg-type]
+        valkey_url="redis://localhost:6379/0",  # type: ignore[arg-type]
+    )
+    assert settings.consumer_reclaim_min_idle_ms == _DEFAULT_RECLAIM_MIN_IDLE_MS
+
+
+def test_consumer_reclaim_min_idle_ms_rejects_below_floor() -> None:
+    """Values below the ge=1_000 floor are rejected at validation."""
+    with pytest.raises(ValidationError):
+        Settings(
+            database_url="postgresql+psycopg://u:p@localhost:5432/db",  # type: ignore[arg-type]
+            database_url_sync="postgresql+psycopg://u:p@localhost:5432/db",  # type: ignore[arg-type]
+            valkey_url="redis://localhost:6379/0",  # type: ignore[arg-type]
+            consumer_reclaim_min_idle_ms=500,
+        )
 
 
 def test_env_file_loading(tmp_path: Path) -> None:

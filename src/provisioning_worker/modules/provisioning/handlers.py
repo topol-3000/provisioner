@@ -1,19 +1,27 @@
 """One handler per consumed ``subscription.*`` event type.
 
-Phase 2 ships these as no-ops: each handler binds structured-logging context
-(envelope, subscription, correlation ids) and logs a debug line, but performs
-no DB writes. The idempotency dedupe + ``processed_event`` insert is owned by
-the wrapper in :mod:`provisioning_worker.shared.event_consumer`, so handlers
-stay thin (CLAUDE.md §6.1.1).
+Phase 3 implements the real body of ``handle_subscription_activated``:
+it opens ``instance`` + ``provisioning_task`` rows inside the dedupe
+session, registers a post-commit Taskiq enqueue callback, and binds
+``instance_id`` to the structlog context. All other handlers remain
+no-ops pending Phase 5 convergence work (CLAUDE.md §6.1.1).
 
-Phase 3 replaces the no-op bodies with real convergence side-effects (open a
-``provisioning.instance`` row, enqueue a create/update task, etc.) using the
-``session`` already opened by the dedupe wrapper.
+The idempotency dedupe + ``processed_event`` insert is owned by the
+wrapper in :mod:`provisioning_worker.shared.event_consumer`, so handlers
+stay thin (CLAUDE.md §6.1.1). Handlers must NOT call
+``broker.task.kiq()`` inline — use :func:`register_post_commit` instead
+(Pitfall 1 fix, T-3-11 mitigation).
 """
 
 from typing import TYPE_CHECKING
 
 import structlog
+
+from provisioning_worker.adapters.m1_entitlement_resolver import DefaultEntitlementResolver
+from provisioning_worker.modules.provisioning.service import ProvisioningService
+from provisioning_worker.modules.provisioning.tasks import create_instance_task
+from provisioning_worker.settings import get_settings
+from provisioning_worker.shared.event_consumer import register_post_commit
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,13 +44,17 @@ __all__ = [
 
 log = structlog.get_logger(__name__)
 
+# Module-level service singleton: wired with the M1 placeholder resolver.
+# main.py does not inject the service into handlers — the handler is thin
+# and constructs the service with a fixed resolver (D-02 swap point is
+# main.py's wiring, not the handler).
+_service = ProvisioningService(entitlement_resolver=DefaultEntitlementResolver())
+
 
 def _bind_context(raw_env, subscription_id: str) -> None:
     """Bind per-event structured-logging context for the current handler.
 
     Binds only opaque identifiers — never secrets or tokens (CLAUDE.md §6.6).
-    ``instance_id`` is intentionally omitted; it is not known until Phase 3
-    opens the instance row.
 
     Args:
         raw_env: The validated inbound envelope (supplies ``id`` and
@@ -61,18 +73,51 @@ async def handle_subscription_activated(
     payload: SubscriptionActivatedPayload,
     session: AsyncSession,
 ) -> None:
-    """Handle ``subscription.activated`` (Phase 2 no-op).
+    """Handle ``subscription.activated`` — open instance + enqueue create task.
 
-    Phase 3 will open a ``provisioning.instance`` row and enqueue a create
-    task here, using the supplied ``session``.
+    Opens a ``provisioning.instance`` row (``status=pending``) and a
+    ``provisioning.provisioning_task`` row (``status=pending``,
+    ``task_type=create``) inside the dedupe session. Registers a post-commit
+    callback that enqueues ``create_instance_task`` after the session commits
+    (Pitfall 1 fix: never enqueue before commit, T-3-11 mitigation).
+
+    The handler does NOT commit — the dedupe wrapper in
+    :mod:`provisioning_worker.shared.event_consumer` commits after staging
+    the ``processed_event`` row.
 
     Args:
-        raw_env: The validated inbound envelope.
+        raw_env: The validated inbound envelope (supplies ``id`` for
+            ``source_event_id`` traceability).
         payload: The validated activation payload.
         session: The open session owned by the dedupe wrapper.
     """
     _bind_context(raw_env, str(payload.subscription_id))
-    log.debug("subscription.activated received (no-op)")
+    settings = get_settings()
+
+    instance, task = await _service.open_instance(
+        payload,
+        session,
+        settings,
+        source_event_id=raw_env.id,
+    )
+
+    structlog.contextvars.bind_contextvars(instance_id=str(instance.id))
+
+    # Register post-commit enqueue — NEVER call .kiq() inline here.
+    # The dedupe wrapper drains this callback AFTER session.commit() (T-3-11).
+    instance_id_str = str(instance.id)
+    task_id_str = str(task.id)
+
+    async def _enqueue() -> None:
+        await create_instance_task.kiq(instance_id_str, task_id_str)
+
+    register_post_commit(_enqueue)
+
+    log.info(
+        "subscription.activated — instance opened",
+        instance_id=instance_id_str,
+        task_id=task_id_str,
+    )
 
 
 async def handle_subscription_lines_changed(
@@ -82,7 +127,7 @@ async def handle_subscription_lines_changed(
 ) -> None:
     """Handle ``subscription.lines_changed`` (Phase 2 no-op).
 
-    Phase 3 will diff the entitlements and enqueue an update task here.
+    Phase 5 will diff the entitlements and enqueue an update task here.
 
     Args:
         raw_env: The validated inbound envelope.
@@ -100,7 +145,7 @@ async def handle_subscription_suspended(
 ) -> None:
     """Handle ``subscription.suspended`` (Phase 2 no-op).
 
-    Phase 3 will drive the instance to the suspended state here.
+    Phase 5 will drive the instance to the suspended state here.
 
     Args:
         raw_env: The validated inbound envelope.
@@ -118,7 +163,7 @@ async def handle_subscription_reinstated(
 ) -> None:
     """Handle ``subscription.reinstated`` (Phase 2 no-op).
 
-    Phase 3 will drive the instance back to the ready state here.
+    Phase 5 will drive the instance back to the ready state here.
 
     Args:
         raw_env: The validated inbound envelope.
@@ -136,7 +181,7 @@ async def handle_subscription_cancelled(
 ) -> None:
     """Handle ``subscription.cancelled`` (Phase 2 no-op).
 
-    Phase 3 will drive the instance through the deprovision path here.
+    Phase 5 will drive the instance through the deprovision path here.
 
     Args:
         raw_env: The validated inbound envelope.

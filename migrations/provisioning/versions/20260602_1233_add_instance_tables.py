@@ -52,7 +52,9 @@ def upgrade() -> None:
         sa.Column("ready_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("last_status_check_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("snapshot_version", sa.Integer(), nullable=True),
-        sa.Column("version", sa.Integer(), nullable=False),
+        # WR-07: server_default mirrors the model-side Python default (version=1)
+        # so non-ORM INSERTs (backfills, raw SQL) do not fail the NOT NULL.
+        sa.Column("version", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),
@@ -64,6 +66,12 @@ def upgrade() -> None:
             sa.TIMESTAMP(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
+        ),
+        # WR-07: CHECK constraints for the numeric invariants the models imply.
+        sa.CheckConstraint("version >= 1", name="ck_instance_version_positive"),
+        sa.CheckConstraint(
+            "desired_seat_cap IS NULL OR desired_seat_cap >= 1",
+            name="ck_instance_seat_cap_positive",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("subscription_id"),
@@ -79,7 +87,8 @@ def upgrade() -> None:
     op.create_table(
         "enforcement_snapshot",
         sa.Column("instance_id", sa.UUID(), nullable=False),
-        sa.Column("version", sa.Integer(), nullable=False),
+        # WR-07: server_default mirrors the model default (version=1).
+        sa.Column("version", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column(
             "computed_at",
             sa.TIMESTAMP(timezone=True),
@@ -90,6 +99,9 @@ def upgrade() -> None:
         sa.Column("seat_cap", sa.Integer(), nullable=False),
         sa.Column("resource_caps", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("feature_flags", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        # WR-07: numeric invariants.
+        sa.CheckConstraint("version >= 1", name="ck_snapshot_version_positive"),
+        sa.CheckConstraint("seat_cap >= 1", name="ck_snapshot_seat_cap_positive"),
         sa.ForeignKeyConstraint(["instance_id"], ["provisioning.instance.id"]),
         sa.PrimaryKeyConstraint("instance_id"),
         schema="provisioning",
@@ -103,7 +115,8 @@ def upgrade() -> None:
         sa.Column("status", sa.Text(), nullable=False),
         sa.Column("source_event_id", sa.String(length=26), nullable=False),
         sa.Column("change_set_id", sa.UUID(), nullable=True),
-        sa.Column("attempt_count", sa.Integer(), nullable=False),
+        # WR-07: server_default mirrors the model default (attempt_count=0).
+        sa.Column("attempt_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("max_attempts", sa.Integer(), nullable=False),
         sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),
@@ -120,6 +133,9 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        # WR-07: numeric invariants matching the model intent.
+        sa.CheckConstraint("attempt_count >= 0", name="ck_task_attempt_count_nonneg"),
+        sa.CheckConstraint("max_attempts >= 1", name="ck_task_max_attempts_positive"),
         sa.ForeignKeyConstraint(["instance_id"], ["provisioning.instance.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("instance_id", "change_set_id"),
@@ -135,6 +151,13 @@ def upgrade() -> None:
         "ALTER TABLE provisioning.provisioning_task "
         "ALTER COLUMN status TYPE provisioning.task_status "
         "USING status::provisioning.task_status"
+    )
+    # WR-07: set the status server_default AFTER the enum cast — a default on
+    # the pre-cast Text column would be dropped by the ALTER COLUMN ... TYPE.
+    # Mirrors the model default (status=pending).
+    op.execute(
+        "ALTER TABLE provisioning.provisioning_task "
+        "ALTER COLUMN status SET DEFAULT 'pending'::provisioning.task_status"
     )
 
 

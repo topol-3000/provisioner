@@ -2,309 +2,196 @@
 phase: 02-event-consumption-idempotency
 reviewed: 2026-06-02T00:00:00Z
 depth: standard
-files_reviewed: 20
+files_reviewed: 4
 files_reviewed_list:
-  - migrations/provisioning/env.py
-  - migrations/provisioning/versions/20260602_0905_add_processed_event.py
-  - src/provisioning_worker/adapters/valkey_streams.py
-  - src/provisioning_worker/events/__init__.py
-  - src/provisioning_worker/events/envelope.py
-  - src/provisioning_worker/events/subscription.py
-  - src/provisioning_worker/main.py
-  - src/provisioning_worker/modules/provisioning/handlers.py
-  - src/provisioning_worker/modules/provisioning/models.py
-  - src/provisioning_worker/ports/event_consumer.py
-  - src/provisioning_worker/settings.py
   - src/provisioning_worker/shared/event_consumer.py
-  - tests/conftest.py
-  - tests/events/__init__.py
-  - tests/events/test_envelope.py
-  - tests/events/test_subscription_payloads.py
-  - tests/provisioning/test_handlers.py
+  - src/provisioning_worker/adapters/valkey_streams.py
   - tests/provisioning/test_idempotency.py
-  - tests/provisioning/test_models.py
   - tests/test_settings.py
 findings:
-  critical: 1
-  warning: 5
-  info: 4
-  total: 10
+  critical: 0
+  warning: 4
+  info: 3
+  total: 7
 status: issues_found
 ---
 
-# Phase 2: Code Review Report
+# Phase 2: Code Review Report (gap-closure 02-04)
 
-**Reviewed:** 2026-06-02
+**Reviewed:** 2026-06-02T00:00:00Z
 **Depth:** standard
-**Files Reviewed:** 20
+**Files Reviewed:** 4
 **Status:** issues_found
 
 ## Summary
 
-Phase 2 ships the consume-side data layer (envelope + five `subscription.*`
-payloads + registry), the Valkey Streams consumer adapter, the
-`processed_event` idempotency ledger + migration, the same-transaction dedupe
-guard, and five no-op handlers wired in `main.py`. The contract models match
-`docs/events.md` field-for-field, the layering respects the CLAUDE.md
-dependency rule, and the happy-path dispatch pipeline is correct.
+Re-review scoped to the phase-02 gap-closure changes (plan 02-04): the
+`IntegrityError` catch/rollback hardening in `handle_with_dedupe` (CONS-03), the
+handler-failure error boundary and missing-handler warning in
+`ValkeyStreamsConsumer._dispatch` (WR-01, WR-04), and a test-isolation fix in
+`test_settings.py`.
 
-The dominant correctness gap is in the idempotency guard: it is a bare
-SELECT-then-INSERT with no handling of the `IntegrityError` that the composite
-primary key is explicitly there to raise. Under the at-least-once delivery the
-project guarantees, a concurrent or reclaim-vs-fresh-read duplicate crashes the
-consumer task rather than short-circuiting — which directly contradicts the
-guarantee the `ProcessedEvent` docstring claims to provide. Several warnings
-around the `XACK`-on-handler-exception flow, an env.py version-table
-inconsistency, and a confusing-but-legal `except A, B:` form round out the
-findings.
+The diff is small and the happy-path behavior is correct: commit-then-ack
+ordering is preserved, the transient-failure boundary keeps the poll loop alive,
+and the concurrent-duplicate race is caught and treated as idempotent. Unit
+tests pass (16 passed, 3 integration deselected) and `ruff check` /
+`ruff format --check` are clean.
 
-No structural-findings substrate was supplied with this review.
-
-## Critical Issues
-
-### CR-01: Dedupe guard cannot survive a concurrent/replayed duplicate — unhandled `IntegrityError` crashes the consumer
-
-**File:** `src/provisioning_worker/shared/event_consumer.py:73-80`
-**Issue:**
-`handle_with_dedupe` performs a single SELECT, and if no row is found, runs the
-handler, INSERTs the ledger row, and commits — with no protection against the
-unique-key conflict the composite PK exists to produce:
-
-```python
-async with session_scope() as session:
-    existing = await _select_processed_event(session, raw_env.id, consumer_group)
-    if existing is not None:
-        return
-    await handler_fn(raw_env, payload, session)
-    await _insert_processed_event(session, raw_env.id, consumer_group)
-    await session.commit()   # can raise IntegrityError
-```
-
-The `ProcessedEvent` docstring (`models.py:29-37`) asserts the intended
-behavior: *"a re-delivered event conflicts on INSERT, the transaction rolls
-back, and the dedupe guard short-circuits on the re-query."* The code never
-implements the re-query or the conflict handling. Two realistic at-least-once
-paths defeat it:
-
-1. **Reclaim races a fresh read.** `_reclaim()` (`valkey_streams.py:220-245`)
-   routes a still-pending PEL entry through `_dispatch` → the same handler.
-   If the original delivery is mid-flight (handler running, not yet
-   committed/ACKed), both calls pass the `existing is None` check, both run the
-   handler, and the second `commit()` raises `IntegrityError`.
-2. **Multiple consumers** (`consumer_name` is configurable; the design
-   anticipates a consumer group with >1 member) processing the same message id
-   produce the same conflict.
-
-When the conflict raises, the exception propagates out of `handle_with_dedupe`
-→ out of `handler(...)` at `valkey_streams.py:216` → out of `_dispatch` →
-out of the `for` loop in `run()` (`valkey_streams.py:144-146`), with **no
-`XACK`** issued. The consumer task dies, the `TaskGroup` in `main.py:74-75`
-raises, and the process exits non-zero. Because the message was never ACKed, on
-restart it is redelivered and — if the conflicting row committed — now
-short-circuits, but the crash/restart churn is a denial-of-availability under
-nothing more than ordinary duplicate delivery. Worse, the handler side effect
-(Phase 3 will add real writes here) ran twice before the second transaction
-rolled back its ledger insert, so "exactly once" is not actually guaranteed for
-the side effect on the losing transaction.
-
-**Fix:** Catch the integrity conflict, roll back, and treat it as a
-short-circuit (idempotent success), so the caller proceeds to `XACK`:
-
-```python
-from sqlalchemy.exc import IntegrityError
-
-async with session_scope() as session:
-    existing = await _select_processed_event(session, raw_env.id, consumer_group)
-    if existing is not None:
-        log.debug("dedupe short-circuit", envelope_id=raw_env.id)
-        return
-    await handler_fn(raw_env, payload, session)
-    await _insert_processed_event(session, raw_env.id, consumer_group)
-    try:
-        await session.commit()
-    except IntegrityError:
-        # Concurrent duplicate won the race; its commit is authoritative.
-        await session.rollback()
-        log.debug("dedupe conflict — concurrent duplicate", envelope_id=raw_env.id)
-        return
-```
-
-Add a unit test that drives two `handle_with_dedupe` calls whose commits race
-(or simulate the conflict by pre-inserting the row before the second commit)
-and assert the second call returns without raising. The current
-`test_replay_short_circuits` only exercises the *sequential* replay path, which
-hits the SELECT guard and never the INSERT conflict — so this defect is
-invisible to the suite.
+No BLOCKER-tier defects. Four WARNING-tier issues degrade robustness or
+maintainability and should be addressed: (1) the `IntegrityError` catch is too
+broad and will swallow unrelated integrity violations as "duplicates" the moment
+Phase 3 adds the second handler-side unique constraint; (2) deterministically-
+failing handlers reclaim forever with no delivery cap or dead-letter path;
+(3) the `except json.JSONDecodeError, KeyError:` clause relies on the new,
+non-obvious PEP 758 bare-tuple syntax and its `KeyError` (missing-`envelope`-
+field) arm is untested; (4) `log.exception` at the handler boundary captures a
+traceback that may surface payload field values.
 
 ## Warnings
 
-### WR-01: Handler exception skips `XACK` silently — no error boundary in the dispatch loop
+### WR-01: Broad `IntegrityError` catch will swallow non-dedupe constraint violations
 
-**File:** `src/provisioning_worker/adapters/valkey_streams.py:214-218`
-**Issue:**
+**File:** `src/provisioning_worker/shared/event_consumer.py:86-92`
+**Issue:** The `except IntegrityError` around `session.commit()` assumes *any*
+integrity violation is a `processed_event` composite-PK conflict from a
+concurrent duplicate, rolls back, logs at `debug`, and returns normally — which
+causes the caller to `XACK` (permanently dropping the event). In Phase 2 this is
+safe because handlers are no-ops and the only staged row is the
+`processed_event` insert. But CLAUDE.md §6.4 commits Phase 3 to a *second*
+handler-side unique constraint — `UNIQUE (instance_id, change_set_id)` on
+`provisioning_task`. Once a handler stages a row that violates that (or any FK),
+`commit()` raises `IntegrityError`, this code mis-classifies it as a duplicate,
+silently swallows it at `debug` level, and ACKs — losing the event with no
+error-level signal and no reclaim. The catch does not discriminate on which
+constraint was violated.
+**Fix:** Narrow the catch to the dedupe-ledger conflict only. After rollback,
+re-`SELECT` the `processed_event` row in a fresh scope and confirm it now exists
+before treating the conflict as idempotent; otherwise re-raise so the handler
+boundary leaves the message unacked for reclaim:
 ```python
-handler = handlers.get(raw_env.type)
-if handler is not None:
-    await handler(raw_env, payload)
-await self._ack(msg_id)
+try:
+    await session.commit()
+except IntegrityError:
+    await session.rollback()
+    async with session_scope() as verify:
+        if await _select_processed_event(verify, raw_env.id, consumer_group) is None:
+            raise  # genuine integrity failure — do not ACK; let reclaim retry
+    log.debug("dedupe conflict — concurrent duplicate", envelope_id=raw_env.id)
+    return
 ```
-Any exception raised by the wrapped handler (the `IntegrityError` of CR-01, a
-DB outage, a bug in Phase 3 convergence) propagates straight out of `_dispatch`
-and `run()`, killing the consumer task. There is no logging at this boundary
-and no decision about whether the message should be retried (left in PEL,
-reclaimed later) versus dead-lettered. The poison/unknown branches are handled
-with care; the *handler-failure* branch — the most operationally important one
-once handlers do real work — has no policy at all. At minimum, transient
-handler failures should be logged and left un-ACKed (so reclaim retries them)
-rather than crashing the loop.
-**Fix:** Wrap the handler call so transient failures are logged and the message
-is intentionally left unacked (no `XACK`) for later reclaim, while the loop
-survives:
+Alternatively, inspect `exc.orig` / the violated constraint name (psycopg
+`UniqueViolation`, `constraint_name == "processed_event_pkey"`) and re-raise on
+anything else.
 
-```python
-handler = handlers.get(raw_env.type)
-if handler is not None:
-    try:
-        await handler(raw_env, payload)
-    except Exception:
-        log.exception("handler failed — leaving message unacked for reclaim",
-                      msg_id=msg_id, envelope_type=raw_env.type)
-        return  # no XACK; reclaim path retries
-await self._ack(msg_id)
-```
-Decide the retry-vs-dead-letter policy explicitly and document it; do not let
-"crash the worker" be the default for every handler error.
+### WR-02: Deterministically-failing handler reclaims forever — no delivery cap or dead-letter
 
-### WR-02: `run_migrations_online` ignores the configurable version-table name
+**File:** `src/provisioning_worker/adapters/valkey_streams.py:233-241`
+**Issue:** The new handler-failure boundary returns without `XACK` on any
+exception so `XAUTOCLAIM` reclaims the entry (correct for *transient* failures).
+But there is no max-delivery counter and no dead-letter path (grep for
+`max_deliver` / `delivery` / `dead.letter` / `attempt` finds none). A handler
+that fails *deterministically* — a logic-poison payload that raises every time,
+or a persistent downstream outage — is reclaimed indefinitely: never ACKs,
+re-enters `_dispatch` on every reclaim scan, re-runs the handler, fails, repeats.
+This is an unbounded reprocessing loop that also prevents the PEL from draining.
+The WR-01 fix correctly distinguishes "leave unacked" from "ACK" but conflates a
+transient failure with a deterministic one.
+**Fix:** Bound retries using the entry's delivery count. On reclaim, read the
+count (via `XPENDING`, or track `msg_id -> attempts`) and, past a threshold,
+route the entry to a dead-letter stream (e.g. `events.subscription.dlq`) and
+`XACK` so the PEL drains and a human can inspect the poison. At minimum, log the
+delivery count at `warning`/`error` so the loop is observable rather than silent.
 
-**File:** `migrations/provisioning/env.py:48,68`
-**Issue:** Offline mode reads the version-table name from config
-(`version_table=config.get_section_option(SCHEMA, "version_table", "alembic_version")`,
-line 48) but online mode hardcodes `version_table="alembic_version"` (line 68).
-If `alembic.ini`'s `provisioning` section ever sets a custom `version_table`,
-offline and online migrations will track revisions in *different* tables,
-silently re-running or skipping migrations. Since the documented workflow
-(`make migrate`) uses online mode, a config drift here is a latent data-safety
-issue.
-**Fix:** Read the same option in both functions:
-```python
-version_table = config.get_section_option(SCHEMA, "version_table", "alembic_version")
-context.configure(
-    ...,
-    version_table=version_table,
-    version_table_schema=SCHEMA,
-)
-```
+### WR-03: `except json.JSONDecodeError, KeyError:` relies on surprising PEP 758 syntax and its `KeyError` arm is untested
 
-### WR-03: `except json.JSONDecodeError, KeyError:` is the unparenthesized tuple form — reads like the removed Python 2 syntax
-
-**File:** `src/provisioning_worker/adapters/valkey_streams.py:176`
-**Issue:** `except json.JSONDecodeError, KeyError:` parses in Python 3.14 as
-`except (json.JSONDecodeError, KeyError):` (a tuple of types) and *does* catch
-both exceptions — verified. But it is visually identical to the Python-2
-`except E, name:` capture form that was removed in Python 3, so any reader will
-flag it as a bug, and a future edit adding an `as exc:` next to it would break.
-This is a correctness-adjacent readability hazard in the single most
-safety-critical parse path. Ruff does not flag it.
-**Fix:** Always parenthesize multi-exception tuples:
+**File:** `src/provisioning_worker/adapters/valkey_streams.py:185`
+**Issue:** The clause `except json.JSONDecodeError, KeyError:` reads like the
+Python-2 `except E, name:` (bind-to-variable) form, which would be a bug. It only
+works because Python 3.14 added PEP 758 (parenthesis-free multi-exception
+except), so it parses as the tuple `(json.JSONDecodeError, KeyError)` and does
+catch both (verified at runtime: bad JSON and a missing `envelope` field both hit
+the branch; `ruff` accepts it). It is correct on 3.14 today, but the bare form is
+fragile — easy to misread as a bug and "fix" by deleting `, KeyError`, and it
+silently breaks on any pre-3.14 interpreter. Compounding the risk, the `KeyError`
+(missing-`envelope`-field) arm has **no test**: `test_dispatch_bad_json_is_poison`
+exercises only the `JSONDecodeError` arm, and no test feeds `fields` without an
+`envelope` key. A regression dropping `KeyError` would pass the whole suite.
+**Fix:** Parenthesize for clarity and add the missing test:
 ```python
 except (json.JSONDecodeError, KeyError):
-```
-
-### WR-04: `_dispatch` ACKs known-type messages with no registered handler and writes no ledger row — silent drop
-
-**File:** `src/provisioning_worker/adapters/valkey_streams.py:214-218`
-**Issue:** If `raw_env.type` is in `_PAYLOAD_REGISTRY` (so it passes the
-unknown-type guard and validates) but is absent from the `handlers` map,
-`handlers.get(...)` returns `None`, the handler is skipped, and the message is
-`XACK`ed with no `processed_event` row and no log line. Today `main.py` wires a
-handler for all five registered types, so this is latent — but it is a silent
-data-loss path the moment a sixth payload model is registered without its
-handler (an easy omission given they live in different files). The unknown-type
-branch at least warns; this branch is completely silent.
-**Fix:** Log a warning when a registered type has no handler, and decide
-whether to ACK (drop) or leave unacked:
-```python
-handler = handlers.get(raw_env.type)
-if handler is None:
-    log.warning("registered type has no handler — dropping",
-                msg_id=msg_id, envelope_type=raw_env.type)
+    log.error("poison message — bad JSON or missing envelope field", msg_id=msg_id)
     await self._ack(msg_id)
     return
-await handler(raw_env, payload)
-await self._ack(msg_id)
+```
+```python
+async def test_dispatch_missing_envelope_field_is_poison() -> None:
+    consumer = _consumer_with_mock_client()
+    handler = AsyncMock()
+    await consumer._dispatch("2b-0", {}, {"subscription.activated": handler})
+    handler.assert_not_awaited()
+    consumer._client.xack.assert_awaited_once()
 ```
 
-### WR-05: Shutdown not observed during the `XAUTOCLAIM` scan or message processing
+### WR-04: `log.exception` at the handler boundary may capture payload field values in the traceback
 
-**File:** `src/provisioning_worker/adapters/valkey_streams.py:135-149,232-245`
-**Issue:** The poll loop only checks `shutdown.is_set()` at the top of each
-cycle. Inside a cycle it processes the full `results` batch and, every 60
-cycles, runs `_reclaim`, whose `while True:` loop walks the entire PEL with
-repeated `XAUTOCLAIM` calls and re-dispatches every reclaimed entry. A
-shutdown signalled during a large reclaim cannot interrupt it; the worker keeps
-dispatching until the full scan completes. This weakens the "graceful stop
-after the in-flight poll cycle" contract documented in the port
-(`ports/event_consumer.py:48-62`) into "after the in-flight reclaim scan," which
-can be unbounded.
-**Fix:** Check `shutdown.is_set()` inside the message loop and inside the
-`_reclaim` `while` loop, breaking out early when set.
+**File:** `src/provisioning_worker/adapters/valkey_streams.py:235-240`
+**Issue:** The handler-failure boundary calls `log.exception(...)`, which records
+the full traceback. A traceback raised from inside a handler can surface local
+variables / payload field values depending on the structlog formatter and any
+frame-capturing processor. The consumed `subscription.*` payloads carry
+sensitive identifiers (`stripe_subscription_id`) today, and CLAUDE.md §6.6
+forbids logging secrets/tokens — a constraint that bites harder in later phases
+when handlers touch `instance_credential` / admin passwords. In Phase 2 handlers
+are no-ops so the exposure is theoretical, but this boundary is exactly where a
+future credential value could leak into logs.
+**Fix:** Keep the explicit bound context (`msg_id`, `envelope_type`) and ensure
+tracebacks render without frame locals (structlog's default `format_exc_info`
+omits locals — verify no `dict_tracebacks`/`ExceptionRenderer` with locals is
+configured). Consider logging the exception type/message rather than a full
+`log.exception` for handler failures, e.g.
+`log.error("handler failed ...", error=type(exc).__name__)`, reserving full
+tracebacks for a layer guaranteed to be payload-free.
 
 ## Info
 
-### IN-01: Redundant assertion in happy-path dispatch test; ordering claim not actually verified
+### IN-01: `_RawEnvelope` drops the canonical envelope's `id` length and `producer` Literal constraints
 
-**File:** `tests/provisioning/test_idempotency.py:80-83`
-**Issue:** Line 83 (`assert handler.await_count == 1`) duplicates line 80
-(`handler.assert_awaited_once()`). More importantly, the test's comment claims
-"XACK happens after the handler returns" but nothing asserts the *ordering* of
-`handler` vs `xack` — both are independent `AsyncMock`s with no shared call
-recorder. The commit-then-ack guarantee (the entire point of the module) is not
-tested.
-**Fix:** Use a shared `MagicMock` parent (`mock_manager.attach_mock(...)`) and
-assert `mock_calls` ordering, or have the handler mock record a timestamp/order
-token the test compares against the `xack` call.
+**File:** `src/provisioning_worker/adapters/valkey_streams.py:65-69`
+**Issue:** The canonical `EventEnvelope` (events/envelope.py) constrains
+`id: str = Field(min_length=26, max_length=26)` and `producer:
+Literal["platform-api","provisioning-worker","telemetry-worker"]`. The adapter's
+first-phase `_RawEnvelope` weakens both to bare `str`, so a wrong-length `id`
+(used directly as the dedupe key) or an unknown `producer` passes the stage-2
+"strict" validation. Pre-existing (outside the reviewed diff regions) but worth
+tightening since `id` is the idempotency key.
+**Fix:** Mirror the canonical constraints on `_RawEnvelope` (`Field(min_length=26,
+max_length=26)` on `id`; the same `Literal` on `producer`) so envelope-level
+drift is caught here too.
 
-### IN-02: `_include_object` shadows the builtin `object`
+### IN-02: Handler-failure test does not assert the failure was logged
 
-**File:** `migrations/provisioning/env.py:32`
-**Issue:** The first parameter is named `object`, shadowing the builtin
-(ruff `A002`-class smell). Harmless here but a poor pattern to copy into future
-autogenerate hooks.
-**Fix:** Rename to `obj` (and `type_` is already disambiguated — keep that).
+**File:** `tests/provisioning/test_idempotency.py:247-263`
+**Issue:** `test_dispatch_handler_failure_leaves_message_unacked` asserts only
+`xack.assert_not_awaited()`. It does not assert that `log.exception` was emitted,
+so a regression that swallows the failure silently (no log) would still pass —
+yet the WR-01 design goal is an *observable* unacked failure.
+**Fix:** Add a structlog-capture assertion that the
+`"handler failed — leaving message unacked for reclaim"` event was logged at
+exception/error level.
 
-### IN-03: `get_settings()` is `lru_cache`d but Alembic env.py imports it at module load
+### IN-03: Concurrent-duplicate conflict logged at `debug` may be too quiet
 
-**File:** `migrations/provisioning/env.py:25` / `settings.py:99-102`
-**Issue:** `env.py` calls `get_settings()` at import time to set the SQLAlchemy
-URL. Because `get_settings` is `@lru_cache(maxsize=1)`, the cached `Settings`
-will be reused for the whole Alembic process. This is fine for the migration
-CLI but worth a note: any tooling that imports `env.py` and later wants
-different settings cannot, and the `# type: ignore[call-arg]` on the cached
-constructor hides that all fields come from env. Not a defect; flagging the
-coupling.
-**Fix:** No change required for Phase 2; document the assumption if env-driven
-migration overrides are ever needed.
-
-### IN-04: `EventEnvelope` is defined and exported but never used on the consume path
-
-**File:** `src/provisioning_worker/events/envelope.py:23-60`
-**Issue:** The adapter validates with the adapter-local `_RawEnvelope`
-(`valkey_streams.py:53-72`), not the public generic `EventEnvelope`. The latter
-is exercised only by tests. This is a deliberate two-phase-parse design (the
-docstrings explain it), but it means two envelope definitions must be kept in
-sync by hand — `_RawEnvelope` drops the `id` min/max-length=26 constraint and
-the `version >= 1` constraint that `EventEnvelope` enforces, so the adapter
-accepts a malformed-length `id` or `version=0` that the public model would
-reject. Low impact (the `id` is only used as a dedupe key string), but it is a
-silent divergence in validation strictness between the two envelopes.
-**Fix:** Either have `_RawEnvelope` carry the same `Field` constraints as
-`EventEnvelope` (min/max length on `id`, `ge=1` on `version`), or add a test
-asserting the two envelopes share the same outer-field constraints so drift is
-caught.
+**File:** `src/provisioning_worker/shared/event_consumer.py:91`
+**Issue:** The IntegrityError-conflict branch logs at `debug`. Once WR-01 is
+addressed and the catch is narrowed to genuine dedupe races, a sustained stream
+of these conflicts is a useful operational signal (e.g. a mis-tuned reclaim
+window producing heavy duplicate delivery). At `debug` it is invisible in
+non-dev JSON logging.
+**Fix:** Consider `info` for the confirmed-duplicate path, or keep `debug` but
+ensure the WR-01 re-raise path surfaces the genuinely-anomalous case at `error`.
 
 ---
 
-_Reviewed: 2026-06-02_
-_Reviewer: Claude (gsd-code-reviewer)_
-_Depth: standard_
+*Reviewed: 2026-06-02T00:00:00Z*
+*Reviewer: Claude (gsd-code-reviewer)*
+*Depth: standard*

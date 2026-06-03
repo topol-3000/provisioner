@@ -137,12 +137,23 @@ Plans:
 **Mode:** mvp
 **Depends on**: Phase 3
 **Requirements**: EVT-01, EVT-02 (`instance.provisioned`)
+**Plans:** 2 plans
 **Success Criteria** (what must be TRUE):
 
   1. The transition to `ready` writes an `instance.provisioned` row to `provisioning.event_outbox` in the **same transaction** as the instance update.
   2. The relay publishes unsent outbox rows to `events.instance` via `XADD` (single `envelope` field, `MAXLEN ~ 100000`) and marks them sent; `valkey-cli XRANGE events.instance - +` shows the envelope with `producer="provisioning-worker"`, a fresh ULID `id`, and `causation_id` = the triggering `subscription.activated` id.
   3. A relay/publish failure leaves the row unsent (records `last_error`, bumps `attempt_count`) and is retried on the next poll — no event is lost or duplicated (consumer-side dedupe on `envelope.id`).
   4. The produced `InstanceProvisionedPayload` is frozen + `extra="forbid"` and carries no credentials.
+
+Plans:
+
+**Wave 1** *(contracts, schema, test scaffolds)*
+
+- [ ] 04-01-PLAN.md — Test scaffolds (test_outbox.py stubs, test_tasks.py stubs) + event/port/adapter contracts (events/instance.py, envelope.py build(), events/__init__.py registry, ports/message_bus.py, adapters/valkey_streams_bus.py, shared/strings.py) + EventOutbox ORM + Alembic migration
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — Emit seam wiring (repository.py OutboxRepo, service.py emit_instance_provisioned, tasks.py step 4 hostname fix + emit call, infrastructure/outbox_relay.py real drain, main.py bus construction) + all Phase 4 tests green
 
 ### Phase 5: Full lifecycle convergence
 

@@ -18,10 +18,11 @@ Phase 3 additions:
   for asserting credential-delivery call counts.
 """
 
-from unittest.mock import AsyncMock
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
+import redis.asyncio as aioredis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
 
 from provisioning_worker.adapters.fake_deployment import FakeDeploymentAdapter
 from provisioning_worker.adapters.m1_entitlement_resolver import DefaultEntitlementResolver
@@ -43,12 +45,44 @@ from provisioning_worker.settings import Settings
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from redis.asyncio import Redis
+
 
 @pytest.fixture(scope="session")
 def postgres_container() -> Iterator[PostgresContainer]:
     """Start a real Postgres 18 container for the integration suite."""
     with PostgresContainer("postgres:18") as container:
         yield container
+
+
+@pytest.fixture(scope="session")
+def valkey_container() -> Iterator[RedisContainer]:
+    """Start a real Valkey 8 container for the integration suite.
+
+    Session-scoped: shared across all integration tests to avoid the cost of
+    container startup for each test. The ``async_redis_client`` fixture is
+    function-scoped and flushes between tests for isolation.
+    """
+    with RedisContainer("valkey/valkey:8") as container:
+        yield container
+
+
+@pytest.fixture
+async def async_redis_client(valkey_container: RedisContainer) -> AsyncIterator[Redis]:
+    """Yield a connected redis.asyncio client backed by the Valkey container.
+
+    Function-scoped: the client connects fresh per test and flushes the db
+    after the test so streams written during one test do not leak into the next.
+    Backed by :func:`valkey_container` (session-scoped Valkey 8 container).
+    """
+    host = valkey_container.get_container_host_ip()
+    port = valkey_container.get_exposed_port(valkey_container.port)
+    client: Redis = aioredis.from_url(f"redis://{host}:{port}/0", decode_responses=False)
+    try:
+        yield client
+    finally:
+        await client.flushall()
+        await client.aclose()
 
 
 @pytest.fixture(scope="session")

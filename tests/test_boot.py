@@ -111,8 +111,8 @@ async def test_boot_log_lines_ordered() -> None:
     capture works regardless of logger caching from prior tests in the session,
     cache_logger_on_first_use is set to False and then the BoundLoggerLazyProxy
     instance caches are cleared by deleting the overridden bind attributes. The
-    three in-process log lines — banner, health-server, and outbox-relay — are
-    verified to appear in the correct order.
+    three in-process log lines — banner, health-server, and outbox-relay-starting
+    — are verified to appear in the correct order.
     """
     settings = _make_settings()
 
@@ -166,13 +166,13 @@ async def test_boot_log_lines_ordered() -> None:
     assert "health server listening" in event_strings, (
         f"Expected 'health server listening' in log events, got: {event_strings}"
     )
-    assert "outbox relay started" in event_strings, (
-        f"Expected 'outbox relay started' in log events, got: {event_strings}"
+    assert "outbox relay starting" in event_strings, (
+        f"Expected 'outbox relay starting' in log events, got: {event_strings}"
     )
 
     banner_idx = event_strings.index("provisioning-worker starting")
     health_idx = event_strings.index("health server listening")
-    relay_idx = event_strings.index("outbox relay started")
+    relay_idx = event_strings.index("outbox relay starting")
 
     assert banner_idx < health_idx, (
         f"Expected 'provisioning-worker starting' (idx={banner_idx}) "
@@ -180,7 +180,7 @@ async def test_boot_log_lines_ordered() -> None:
     )
     assert banner_idx < relay_idx, (
         f"Expected 'provisioning-worker starting' (idx={banner_idx}) "
-        f"before 'outbox relay started' (idx={relay_idx})"
+        f"before 'outbox relay starting' (idx={relay_idx})"
     )
 
 

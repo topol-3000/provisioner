@@ -772,10 +772,12 @@ async def test_no_credential_resend_on_retry(
 # ---------------------------------------------------------------------------
 
 
-async def test_emit_instance_provisioned_fields() -> None:
+async def test_emit_instance_provisioned_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """EVT-02: envelope enqueued by create_instance_task has correct causation_id and payload fields.
 
-    After create_instance_task completes (in_memory_broker), OutboxRepo.enqueue
+    After create_instance_task completes with a mocked session, OutboxRepo.enqueue
     must have been called with an envelope where:
     - causation_id == the source_event_id from the task row
     - hostname == f"{spec.slug}.{settings.instance_domain_suffix}"
@@ -783,31 +785,284 @@ async def test_emit_instance_provisioned_fields() -> None:
     - snapshot_version is an int (>= 1)
     - no admin_password field in the payload (D-09)
     """
-    pytest.skip("EVT-02 — emit_instance_provisioned not implemented yet (Plan 02)")
+    from provisioning_worker.modules.provisioning.repository import OutboxRepo
+
+    spec = _test_spec()
+    instance = _make_instance()
+    # Set fields that emit_instance_provisioned reads off the refreshed instance.
+    # Note: ready_at must be None initially so is_first_ready=True triggers the emit.
+    instance.hostname = f"{spec.slug}.example.local"
+    instance.url = f"https://{instance.hostname}"
+    instance.snapshot_version = 1
+    task = _make_task(instance.id, spec)
+
+    adapter = FakeDeploymentAdapter()
+    clock = FakeClock()
+    settings = _test_settings()
+    service = ProvisioningService(entitlement_resolver=DefaultEntitlementResolver())
+
+    # Track envelope passed to enqueue.
+    captured_envelopes: list = []
+    original_enqueue = OutboxRepo.enqueue
+
+    async def _spy_enqueue(self, envelope):
+        captured_envelopes.append(envelope)
+
+    monkeypatch.setattr(OutboxRepo, "enqueue", _spy_enqueue)
+
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.rollback = AsyncMock()
+    session.add = MagicMock()
+    call_count = 0
+
+    async def _execute(stmt, *args, **kwargs):
+        nonlocal call_count
+        mock_result = MagicMock()
+        call_count += 1
+        if call_count <= 2:
+            mock_result.scalar_one_or_none.return_value = instance if call_count == 1 else task
+        else:
+            mock_result.scalar_one_or_none.return_value = instance
+        return mock_result
+
+    session.execute = AsyncMock(side_effect=_execute)
+
+    @asynccontextmanager
+    async def _scope():
+        yield session
+
+    monkeypatch.setattr(tasks_mod, "session_scope", _scope)
+
+    with patch.object(create_instance_task, "kiq", new=AsyncMock()):
+        await create_instance_task(
+            str(instance.id),
+            str(task.id),
+            settings,
+            adapter,
+            AsyncMock(),
+            clock,
+            service,
+        )
+
+    assert len(captured_envelopes) == 1, (
+        f"OutboxRepo.enqueue must be called exactly once, got {len(captured_envelopes)}"
+    )
+    envelope = captured_envelopes[0]
+    assert envelope.causation_id == task.source_event_id, (
+        f"causation_id must equal task.source_event_id={task.source_event_id!r}, "
+        f"got {envelope.causation_id!r}"
+    )
+    payload = envelope.payload
+    expected_hostname = f"{spec.slug}.{settings.instance_domain_suffix}"
+    assert payload.hostname == expected_hostname, (
+        f"hostname must be {expected_hostname!r}, got {payload.hostname!r}"
+    )
+    assert payload.url == f"https://{expected_hostname}", (
+        f"url must be https://{expected_hostname}, got {payload.url!r}"
+    )
+    assert isinstance(payload.snapshot_version, int) and payload.snapshot_version >= 1
+    # D-09: no credentials in payload
+    assert not hasattr(payload, "admin_password"), "admin_password must not exist in payload"
 
 
-async def test_hostname_derivation() -> None:
-    """EVT-02: instance.url and instance.hostname on the committed DB row match the FQDN pattern.
+async def test_hostname_derivation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EVT-02: the instance status update in step 4 passes the FQDN hostname and url (D-08).
 
-    After create_instance_task completes:
-    - instance.hostname == f"{slug}.{domain_suffix}"
-    - instance.url == f"https://{slug}.{domain_suffix}"
+    Verifies the values computed for hostname and url in _transition_to_ready match
+    f"{slug}.{instance_domain_suffix}" and f"https://{hostname}" respectively (D-08).
 
     This verifies the D-08 fix: the Phase-3 placeholder url=f"https://{spec.slug}"
     is replaced with the full FQDN using settings.instance_domain_suffix.
     """
-    pytest.skip("EVT-02 — hostname derivation fix (D-08) not implemented yet (Plan 02)")
+    from provisioning_worker.modules.provisioning.service import ProvisioningService as SvcClass
+
+    spec = _test_spec()
+    settings = _test_settings()
+
+    # The derivation logic is in _transition_to_ready; verify it directly using
+    # the spec slug and domain suffix from settings.
+    expected_hostname = f"{spec.slug}.{settings.instance_domain_suffix}"
+    expected_url = f"https://{expected_hostname}"
+
+    # Now run a full convergence with a patched emit to avoid the None-hostname issue
+    # (mock instance lacks hostname/url until update_instance_status sets them).
+    instance = _make_instance()
+    task = _make_task(instance.id, spec)
+
+    adapter = FakeDeploymentAdapter()
+    clock = FakeClock()
+    service = ProvisioningService(entitlement_resolver=DefaultEntitlementResolver())
+
+    # Track update_instance_status calls to inspect kwargs.
+    captured_kwargs: list[dict] = []
+    import provisioning_worker.modules.provisioning.repository as repo_mod
+
+    original_update = repo_mod.update_instance_status
+
+    async def _spy_update(session, instance_id, status, **kwargs):
+        captured_kwargs.append({"status": status, **kwargs})
+        # Also update instance.status so the state machine stays coherent.
+        instance.status = status
+        for k, v in kwargs.items():
+            setattr(instance, k, v)
+
+    monkeypatch.setattr(repo_mod, "update_instance_status", _spy_update)
+
+    # Also patch OutboxRepo.enqueue to avoid ValidationError from None fields
+    # (emit is not the focus of this test).
+    from provisioning_worker.modules.provisioning.repository import OutboxRepo
+
+    async def _noop_enqueue(self, envelope):
+        pass
+
+    monkeypatch.setattr(OutboxRepo, "enqueue", _noop_enqueue)
+
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.rollback = AsyncMock()
+    session.add = MagicMock()
+    call_count = 0
+
+    async def _execute(stmt, *args, **kwargs):
+        nonlocal call_count
+        mock_result = MagicMock()
+        call_count += 1
+        if call_count <= 2:
+            mock_result.scalar_one_or_none.return_value = instance if call_count == 1 else task
+        else:
+            mock_result.scalar_one_or_none.return_value = instance
+        return mock_result
+
+    session.execute = AsyncMock(side_effect=_execute)
+
+    @asynccontextmanager
+    async def _scope():
+        yield session
+
+    monkeypatch.setattr(tasks_mod, "session_scope", _scope)
+
+    with patch.object(create_instance_task, "kiq", new=AsyncMock()):
+        await create_instance_task(
+            str(instance.id),
+            str(task.id),
+            settings,
+            adapter,
+            AsyncMock(),
+            clock,
+            service,
+        )
+
+    # Find the ready-transition call (it passes ready_at, hostname, url).
+    ready_calls = [kw for kw in captured_kwargs if "hostname" in kw]
+    assert len(ready_calls) >= 1, "update_instance_status with hostname kwarg must be called"
+    ready_call = ready_calls[-1]
+    assert ready_call["hostname"] == expected_hostname, (
+        f"hostname must be {expected_hostname!r}, got {ready_call['hostname']!r}"
+    )
+    assert ready_call["url"] == expected_url, (
+        f"url must be {expected_url!r}, got {ready_call['url']!r}"
+    )
 
 
-async def test_no_duplicate_emit_on_retry() -> None:
+async def test_no_duplicate_emit_on_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """EVT-01: emit guarded by is_first_ready — no duplicate outbox row on retry.
 
-    Run convergence once to ready (is_first_ready=True → emit called).
-    Simulate a second call with ready_at already set (is_first_ready=False).
+    Run convergence once (is_first_ready=True → emit called once).
+    Simulate a second call with ready_at already set (is_first_ready=False → no emit).
     OutboxRepo.enqueue must have been called exactly once total across both runs.
 
     This tests the D-02 / Pitfall 2 guard: emit is inside `if is_first_ready:`
     so a task retry never double-enqueues despite ON CONFLICT DO NOTHING being
     defense-in-depth (not primary mechanism).
     """
-    pytest.skip("EVT-01 — is_first_ready emit guard not implemented yet (Plan 02)")
+    from datetime import UTC, datetime
+
+    from provisioning_worker.modules.provisioning.repository import OutboxRepo
+
+    spec = _test_spec()
+    instance = _make_instance()
+    task = _make_task(instance.id, spec)
+
+    adapter = FakeDeploymentAdapter()
+    clock = FakeClock()
+    settings = _test_settings()
+    service = ProvisioningService(entitlement_resolver=DefaultEntitlementResolver())
+
+    enqueue_call_count = 0
+    original_enqueue = OutboxRepo.enqueue
+
+    async def _count_enqueue(self, envelope):
+        nonlocal enqueue_call_count
+        enqueue_call_count += 1
+
+    monkeypatch.setattr(OutboxRepo, "enqueue", _count_enqueue)
+
+    session = MagicMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.rollback = AsyncMock()
+    session.add = MagicMock()
+    call_count = 0
+
+    async def _execute(stmt, *args, **kwargs):
+        nonlocal call_count
+        mock_result = MagicMock()
+        call_count += 1
+        if call_count <= 2:
+            mock_result.scalar_one_or_none.return_value = instance if call_count == 1 else task
+        else:
+            mock_result.scalar_one_or_none.return_value = instance
+        return mock_result
+
+    session.execute = AsyncMock(side_effect=_execute)
+
+    @asynccontextmanager
+    async def _scope():
+        yield session
+
+    monkeypatch.setattr(tasks_mod, "session_scope", _scope)
+
+    # First run: is_first_ready=True (ready_at is None initially).
+    with patch.object(create_instance_task, "kiq", new=AsyncMock()):
+        await create_instance_task(
+            str(instance.id),
+            str(task.id),
+            settings,
+            adapter,
+            AsyncMock(),
+            clock,
+            service,
+        )
+
+    assert enqueue_call_count == 1, (
+        f"enqueue must be called exactly once on first run, got {enqueue_call_count}"
+    )
+
+    # Second run: simulate ready_at already set (is_first_ready=False).
+    # Reset instance to configuring so the convergence path can replay.
+    instance.ready_at = datetime(2026, 6, 1, tzinfo=UTC)
+    instance.status = InstanceStatus.pending  # reset for the convergence replay
+    call_count = 0
+
+    with patch.object(create_instance_task, "kiq", new=AsyncMock()):
+        await create_instance_task(
+            str(instance.id),
+            str(task.id),
+            settings,
+            adapter,
+            AsyncMock(),
+            clock,
+            service,
+        )
+
+    assert enqueue_call_count == 1, (
+        f"enqueue must still be 1 after retry (is_first_ready=False guards the emit), "
+        f"got {enqueue_call_count}"
+    )

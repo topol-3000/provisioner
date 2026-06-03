@@ -21,7 +21,13 @@ from provisioning_worker.adapters.console_notification import ConsoleNotificatio
 from provisioning_worker.adapters.fake_deployment import FakeDeploymentAdapter
 from provisioning_worker.adapters.m1_entitlement_resolver import DefaultEntitlementResolver
 from provisioning_worker.adapters.valkey_streams import ValkeyStreamsConsumer
-from provisioning_worker.infrastructure.db import dispose_engine, get_engine, session_scope
+from provisioning_worker.adapters.valkey_streams_bus import ValkeyStreamsBus
+from provisioning_worker.infrastructure.db import (
+    dispose_engine,
+    get_engine,
+    get_session_factory,
+    session_scope,
+)
 from provisioning_worker.infrastructure.health_server import run_health_server
 from provisioning_worker.infrastructure.logging import configure_logging
 from provisioning_worker.infrastructure.observability import configure_tracing
@@ -88,15 +94,20 @@ async def run(settings: Settings) -> None:
         loop.add_signal_handler(sig, shutdown.set)
 
     get_engine(settings)
+    bus = ValkeyStreamsBus(settings)
     try:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(_run_consumer(settings, shutdown), name="consumer")
             tg.create_task(_run_convergence(settings, shutdown), name="convergence")
-            tg.create_task(run_outbox_relay(settings, shutdown), name="outbox_relay")
+            tg.create_task(
+                run_outbox_relay(settings, get_session_factory(), bus, shutdown),
+                name="outbox_relay",
+            )
             tg.create_task(run_health_server(settings, shutdown), name="health_server")
     except* Exception as eg:
         raise SystemExit(1) from eg.exceptions[0]
     finally:
+        await bus.close()  # Pitfall 7: close bus before engine disposal
         await dispose_engine()
 
 

@@ -137,7 +137,7 @@ Plans:
 **Mode:** mvp
 **Depends on**: Phase 3
 **Requirements**: EVT-01, EVT-02 (`instance.provisioned`)
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 **Success Criteria** (what must be TRUE):
 
   1. The transition to `ready` writes an `instance.provisioned` row to `provisioning.event_outbox` in the **same transaction** as the instance update.
@@ -149,7 +149,7 @@ Plans:
 
 **Wave 1** *(contracts, schema, test scaffolds)*
 
-- [ ] 04-01-PLAN.md — Test scaffolds (test_outbox.py stubs, test_tasks.py stubs) + event/port/adapter contracts (events/instance.py, envelope.py build(), events/__init__.py registry, ports/message_bus.py, adapters/valkey_streams_bus.py, shared/strings.py) + EventOutbox ORM + Alembic migration
+- [x] 04-01-PLAN.md — Test scaffolds (test_outbox.py stubs, test_tasks.py stubs) + event/port/adapter contracts (events/instance.py, envelope.py build(), events/__init__.py registry, ports/message_bus.py, adapters/valkey_streams_bus.py, shared/strings.py) + EventOutbox ORM + Alembic migration
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

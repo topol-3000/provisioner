@@ -101,11 +101,11 @@ roadmap must cover. `[ ]` = active scope, `[x]` = shipped.
 
 ### Event production
 
-- [ ] **EVT-01**: A `provisioning.event_outbox` + relay publishes `instance.*`
+- [x] **EVT-01**: A `provisioning.event_outbox` + relay publishes `instance.*`
   envelopes to `events.instance` (`XADD`, single `envelope` field,
   `MAXLEN ~ 100000`), with the outbox row written in the **same transaction** as
   the state change (`UNIQUE(envelope_id)`).
-- [ ] **EVT-02**: The produced `instance.*` payload catalog is authored and
+- [x] **EVT-02**: The produced `instance.*` payload catalog is authored and
   emitted — `provisioned`, `updated`, `suspended`, `reinstated`, `failed`,
   `deprovisioned` (frozen, `extra="forbid"`, `producer="provisioning-worker"`,
   `causation_id` = triggering envelope id). `instance.deprovisioned`'s field set

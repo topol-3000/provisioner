@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone-1-fake-adapter-pipeline
 status: executing
-last_updated: "2026-06-03T10:13:11.641Z"
-last_activity: 2026-06-03 -- Phase 04 planning complete
+last_updated: "2026-06-03T11:39:37.755Z"
+last_activity: 2026-06-03
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
   percent: 60
 ---
 
@@ -23,23 +23,23 @@ See: .planning/PROJECT.md (created 2026-06-01)
 Odoo instance — automatically, idempotently, and observably — by consuming
 `subscription.*` lifecycle events and converging the instance through a pluggable
 deployment adapter.
-**Current focus:** Phase 03 — registry-create-path-fake-adapter
+**Current focus:** Phase 04 — event-production-outbox-relay
 `FakeDeploymentAdapter` (no Coolify, no real Odoo). Phase 1 — repo scaffold & worker skeleton.
 
 ## Current Position
 
-Phase: 03 (registry-create-path-fake-adapter) — EXECUTING
-Plan: 4 of 4
+Phase: 04 (event-production-outbox-relay) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
 dedupe guard (shared/event_consumer.py) lacks IntegrityError handling on the
 concurrent/reclaim-race path; uncaught commit crashes the consumer with no XACK.
 Code review CR-01 + verifier both confirmed (probe vs real Postgres). Phase NOT
 complete — next: `/gsd-plan-phase 2 --gaps` to close. See 02-VERIFICATION.md.
-Last activity: 2026-06-03 -- Phase 04 planning complete
-Resume file: .planning/phases/04-event-production-outbox-relay/04-CONTEXT.md
+Last activity: 2026-06-03
+Resume file: None
 Stopped at: Phase 4 context gathered
 
-Progress: [██████████] 100%
+Progress: [█████████░] 92%
 
 ## Notes
 
@@ -66,6 +66,7 @@ Progress: [██████████] 100%
 | Phase 03 P02 | 7m | 2 tasks | 7 files |
 | Phase 03 P03 | 35m | - tasks | - files |
 | Phase 03 P04 | 55m | 2 tasks | 6 files |
+| Phase 04 P01 | 6m | 2 tasks | 10 files |
 
 ## Decisions
 
@@ -76,3 +77,6 @@ Progress: [██████████] 100%
 - [Phase ?]: _POST_COMMIT_ENQUEUE ContextVar with None default; reset per invocation; post-commit callbacks drained only after session.commit() (T-3-11)
 - [Phase ?]: ProvisioningService.write_enforcement_snapshot owns snapshot coordination; tasks.py never calls repository snapshot functions directly (WARNING 4 fix)
 - [Phase ?]: Receiver.listen(shutdown) used as all-in-one task listener in _run_convergence; boot recovery re-kicks overdue tasks (D-10)
+- [Phase ?]: Phase 04-01: D-02 EventEnvelope.build() mints fresh ULID; UNIQUE(envelope_id) is backstop
+- [Phase ?]: Phase 04-01: D-06 produced-side envelope_class_for registry — relay rebuilds typed envelope from JSONB before XADD
+- [Phase ?]: Phase 04-01: D-09 InstanceProvisionedPayload has no credentials; frozen+extra=forbid blocks accidental field additions

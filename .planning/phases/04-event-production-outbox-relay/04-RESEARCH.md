@@ -542,7 +542,9 @@ class EventOutbox(Base):
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All three resolved inline with adopted recommendations; Phase 4 plans implement each (`shared/strings.py`, `events/instance.py`, `OutboxRepo` class).
 
 1. **Where should `_truncate` live?**
    - What we know: Platform-api puts it in `shared/strings.py`. This repo has only one call site in Phase 4 (relay). Phase 5 may add more (e.g. recording relay errors for future payloads).

@@ -33,7 +33,7 @@ bearer token + serving `enforcement_snapshot` to a live plugin,
 - [x] **Phase 1: Repo scaffold & worker skeleton** — `pyproject`/`uv.lock`/`Makefile`/CI, the `python -m provisioning_worker` entrypoint (four concerns), typed `Settings`, `/healthz`, the single `provisioning` Alembic tree, structlog/OTel bootstrap (completed 2026-06-01)
 - [x] **Phase 2: Event consumption & idempotency** — the `events.subscription` consumer (`cg.provisioning-convergence`), the re-implemented envelope + `subscription.*` payloads, transactional `processed_event` dedupe, poison-message handling (all 3 plans built; verification gaps_found 2026-06-02 — CONS-03 idempotency blocker, see 02-VERIFICATION.md) (completed 2026-06-02)
 - [x] **Phase 3: Registry & create-path (fake adapter)** — `provisioning.instance`/`provisioning_task`/`enforcement_snapshot` tables, the `DeploymentAdapter` port + `FakeDeploymentAdapter`, `subscription.activated` → `ready`, `InstanceSpec`, Taskiq retry/backoff, console credential delivery (completed 2026-06-02)
-- [ ] **Phase 4: Event production (outbox → relay)** — `provisioning.event_outbox` + relay to `events.instance`, the envelope publisher, and `instance.provisioned` emitted atomically on first `ready`
+- [x] **Phase 4: Event production (outbox → relay)** — `provisioning.event_outbox` + relay to `events.instance`, the envelope publisher, and `instance.provisioned` emitted atomically on first `ready` (completed 2026-06-03)
 - [ ] **Phase 5: Full lifecycle convergence** — `lines_changed` / `suspended` / `reinstated` / `cancelled` (incl. `at_period_end` grace), the rest of the `instance.*` catalog, enforcement-snapshot computation/versioning, and observability (metrics) polish
 
 ## Phase Details
@@ -137,7 +137,7 @@ Plans:
 **Mode:** mvp
 **Depends on**: Phase 3
 **Requirements**: EVT-01, EVT-02 (`instance.provisioned`)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 **Success Criteria** (what must be TRUE):
 
   1. The transition to `ready` writes an `instance.provisioned` row to `provisioning.event_outbox` in the **same transaction** as the instance update.
@@ -153,7 +153,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — Emit seam wiring (repository.py OutboxRepo, service.py emit_instance_provisioned, tasks.py step 4 hostname fix + emit call, infrastructure/outbox_relay.py real drain, main.py bus construction) + all Phase 4 tests green
+- [x] 04-02-PLAN.md — Emit seam wiring (repository.py OutboxRepo, service.py emit_instance_provisioned, tasks.py step 4 hostname fix + emit call, infrastructure/outbox_relay.py real drain, main.py bus construction) + all Phase 4 tests green
 
 ### Phase 5: Full lifecycle convergence
 

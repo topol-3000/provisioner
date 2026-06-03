@@ -1,0 +1,102 @@
+# Phase 4: Event production (outbox → relay) - Discussion Log
+
+> **Audit trail only.** Do not use as input to planning, research, or execution agents.
+> Decisions are captured in CONTEXT.md — this log preserves the alternatives considered.
+
+**Date:** 2026-06-03
+**Phase:** 4-event-production-outbox-relay
+**Areas discussed:** Exactly-once mechanism, Relay failure policy, Relay claim strategy, Emit seam + payload mapping
+
+---
+
+## Exactly-once mechanism
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| First-ready guard is primary | Emit the outbox row inside the SAME txn as the `ready_at null→now` transition; UNIQUE(envelope_id) is a backstop, not primary. | ✓ |
+| Dedup constraint is primary | Treat UNIQUE(envelope_id) + ON CONFLICT DO NOTHING as primary, requiring a deterministic envelope id. | |
+
+**User's choice:** First-ready guard is primary (→ D-01)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Fresh ULID at emit | Mint a fresh random ULID via EventEnvelope.build(), like platform-api; UNIQUE catches the pathological double-insert. | ✓ |
+| Deterministic from instance_id | Derive the ULID from instance_id so re-emit collides on UNIQUE. Adds complexity, diverges from platform-api. | |
+
+**User's choice:** Fresh ULID at emit (→ D-02)
+**Notes:** First-ready guard prevents re-emit, so determinism is unnecessary.
+
+---
+
+## Relay failure policy
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Retry forever, no cap | Record last_error, bump attempt_count, leave sent_at NULL, retry indefinitely; no cap, no DLQ. Mirrors platform-api. | ✓ |
+| Cap attempts → terminal | After N attempts mark the row terminal so the relay stops; operator must intervene. Diverges + adds schema. | |
+
+**User's choice:** Retry forever, no cap (→ D-03)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Treat both the same | Any deserialize-or-publish exception → last_error + attempt_count + retry next poll. Simplest; mirrors platform-api. | ✓ |
+| Distinguish them | Catch deserialize/validation errors separately from transport errors for louder logging / non-churn. | |
+
+**User's choice:** Treat both the same (→ D-04)
+
+---
+
+## Relay claim strategy
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| SELECT … FOR UPDATE SKIP LOCKED | Batched drain ordered by created_at, one txn per drain; multi-replica-safe; mirrors platform-api. | ✓ |
+| Plain SELECT (single-relay) | Simpler WHERE sent_at IS NULL with no locking, assuming one relay; needs a rewrite to scale. | |
+
+**User's choice:** SELECT … FOR UPDATE SKIP LOCKED (→ D-05)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Rebuild via produced registry | Store payload JSONB; rebuild EventEnvelope.model_validate at publish + re-serialize. Needs a produced-side envelope_class_for registry (1 entry in M1). | ✓ |
+| Publish stored bytes directly | Store the fully-serialized envelope and XADD verbatim — no rebuild, no registry. | |
+
+**User's choice:** Rebuild via produced registry (→ D-06)
+
+---
+
+## Emit seam + payload mapping
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| service.py mints, OutboxRepo enqueues | ProvisioningService.emit_instance_provisioned builds the envelope + calls OutboxRepo.enqueue, invoked from tasks.py inside the ready txn. Honors CLAUDE.md §6.1.1. | ✓ |
+| tasks.py writes outbox directly | tasks.py builds the envelope + inserts the row itself. Fewer layers but violates §6.1.1. | |
+
+**User's choice:** service.py mints, OutboxRepo enqueues (→ D-07)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| hostname={slug}.{suffix}, url=https://{hostname} | Derive full FQDN; fix the Phase-3 placeholder url=https://{slug}; single derivation helper. | ✓ |
+| Keep current url, hostname=slug only | Leave url=https://{slug} and hostname=slug (bare). Ships an incomplete URL into the event. | |
+| You decide | Let the planner/executor choose against the docs, as long as hostname and url are consistent and use the suffix. | |
+
+**User's choice:** hostname={slug}.{suffix}, url=https://{hostname} (→ D-08)
+**Notes:** Remaining payload fields (provisioned_at=ready_at, causation_id=task.source_event_id, snapshot_version, admin_email, ids) confirmed as mechanical mappings off the Instance row (→ D-09).
+
+---
+
+## Claude's Discretion
+
+- MessageBus Protocol surface + ValkeyStreamsBus constants (MAXLEN, approximate) — mirror platform-api.
+- OutboxRepo as class vs module function; event_outbox PK type + index choices beyond UNIQUE(envelope_id).
+- EventEnvelope.build() location + exact signature.
+- stream column derivation timing (enqueue vs publish).
+- How task.source_event_id is made available at the emit point (capture-while-open vs re-read).
+- Unit vs @pytest.mark.integration test boundary; keep the fast path Docker-free.
+- Alembic revision content (review autogenerated SQL — server_defaults, CHECK).
+
+## Deferred Ideas
+
+- Rest of the produced instance.* catalog (updated/suspended/reinstated/failed/deprovisioned) — Phase 5.
+- Max-attempts cap / terminal poison row + dead-letter stream — not milestone 1.
+- events.instance consumption (MessageBus.consume) — platform-api Phase 6.
+- Metrics (outbox backlog depth, publish failure/retry counts) — Phase 5.

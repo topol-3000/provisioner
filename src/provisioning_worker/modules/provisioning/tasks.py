@@ -180,6 +180,7 @@ async def _run_convergence(
         # DetachedInstanceError on the real engine. Capture the values now.
         current_status = instance.status
         task_payload = task.payload
+        source_event_id = task.source_event_id  # CR-01: capture before session exits (D-09)
 
     # WR-03 fix: guard a missing/malformed payload as a permanent (non-retryable)
     # failure rather than burning the retry budget on an un-parseable payload.
@@ -224,26 +225,14 @@ async def _run_convergence(
         await service.write_enforcement_snapshot(session, instance_id, spec, version=1)
         await session.commit()
 
-    # --- Step 4: first-ready guard + credential delivery ---
-    async with session_scope() as session:
-        instance = await repository.get_instance_by_id(session, instance_id)
-        if instance is None:
-            log.error("instance disappeared before ready transition")
-            return
+    # --- Step 4: first-ready guard + outbox emit + credential delivery ---
+    # D-08: single hostname derivation for both the instance column and the payload.
+    hostname = f"{spec.slug}.{settings.instance_domain_suffix}"
+    url = f"https://{hostname}"
 
-        is_first_ready = instance.ready_at is None
-        ready_at = clock.now()
-
-        service.validate_transition(InstanceStatus.configuring, InstanceStatus.ready)
-        await repository.update_instance_status(
-            session,
-            instance_id,
-            InstanceStatus.ready,
-            ready_at=ready_at,
-            url=f"https://{spec.slug}",
-        )
-        await repository.record_task_success(session, task_id)
-        await session.commit()
+    is_first_ready = await _transition_to_ready(
+        instance_id, task_id, hostname, url, source_event_id, clock, service
+    )
 
     # Send credentials exactly once: only when ready_at was NULL (D-13, T-3-09).
     # Secrets are discarded after this call — never assigned to any persistent variable.
@@ -259,7 +248,7 @@ async def _run_convergence(
                 CredentialNotification(
                     recipient_email=spec.admin_email,
                     instance_id=instance_id,
-                    instance_url=f"https://{spec.slug}",
+                    instance_url=url,
                     admin_login=spec.admin_email,
                     admin_password=create_result.admin_password,  # never logged (T-3-07)
                 )
@@ -278,6 +267,77 @@ async def _run_convergence(
         log.info("skipping credential re-delivery — ready_at already set (D-13)")
 
     log.info("create_instance_task completed", status="ready")
+
+
+async def _transition_to_ready(
+    instance_id: UUID,
+    task_id: UUID,
+    hostname: str,
+    url: str,
+    source_event_id: str,
+    clock: Clock,
+    service: ProvisioningService,
+) -> bool:
+    """Commit the ready transition, record task success, and enqueue the outbox event.
+
+    Opens a single ``session_scope()`` that atomically:
+    - Updates instance status to ``ready`` (with ``hostname``, ``url``, ``ready_at``).
+    - Records task success.
+    - Emits ``instance.provisioned`` to the outbox (inside the same transaction, D-01).
+
+    The emit is guarded by ``is_first_ready`` so retries never double-enqueue
+    (D-02 — ON CONFLICT DO NOTHING is defense-in-depth, not the primary guard).
+
+    Args:
+        instance_id: UUID of the instance.
+        task_id: UUID of the provisioning task.
+        hostname: Derived FQDN (``{slug}.{instance_domain_suffix}`` — D-08).
+        url: ``https://{hostname}`` for the instance column and credential email.
+        source_event_id: ULID of the triggering ``subscription.activated`` envelope
+            (captured in the first ``session_scope``; used as ``causation_id`` — D-09).
+        clock: The clock (FakeClock in tests, SystemClock in production).
+        service: The provisioning service (state machine + outbox emit).
+
+    Returns:
+        ``True`` if this was the first time the instance reached ``ready``
+        (``ready_at`` was NULL), ``False`` if it was already set (retry path).
+    """
+    async with session_scope() as session:
+        instance = await repository.get_instance_by_id(session, instance_id)
+        if instance is None:
+            log.error("instance disappeared before ready transition")
+            return False
+
+        is_first_ready = instance.ready_at is None
+        ready_at = clock.now()
+
+        service.validate_transition(InstanceStatus.configuring, InstanceStatus.ready)
+        await repository.update_instance_status(
+            session,
+            instance_id,
+            InstanceStatus.ready,
+            ready_at=ready_at,
+            hostname=hostname,
+            url=url,
+        )
+        await repository.record_task_success(session, task_id)
+
+        # D-01 / D-07: emit is inside the same transaction as the ready transition.
+        # Guarded by is_first_ready so a task retry never double-enqueues
+        # (ON CONFLICT DO NOTHING is the backstop, not the primary guard — D-02).
+        if is_first_ready:
+            # Re-load the instance so ready_at / snapshot_version are populated
+            # (they were just written via update_instance_status above).
+            refreshed = await repository.get_instance_by_id(session, instance_id)
+            if refreshed is not None:
+                await service.emit_instance_provisioned(
+                    session,
+                    refreshed,
+                    causation_id=source_event_id,
+                )
+
+        await session.commit()
+        return is_first_ready
 
 
 async def _poll_until_healthy(

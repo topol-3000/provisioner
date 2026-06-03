@@ -22,6 +22,10 @@ from uuid import uuid7
 
 import structlog
 
+from provisioning_worker.events.envelope import EventEnvelope
+from provisioning_worker.events.instance import (
+    InstanceProvisionedPayload,
+)
 from provisioning_worker.modules.provisioning.models import (
     Instance,
     InstanceStatus,
@@ -30,6 +34,7 @@ from provisioning_worker.modules.provisioning.models import (
     TaskType,
 )
 from provisioning_worker.modules.provisioning.repository import (
+    OutboxRepo,
     insert_enforcement_snapshot,
     update_snapshot_version,
 )
@@ -207,3 +212,52 @@ class ProvisioningService:
         """
         await insert_enforcement_snapshot(session, instance_id, spec, version)
         await update_snapshot_version(session, instance_id, version)
+
+    async def emit_instance_provisioned(
+        self,
+        session: AsyncSession,
+        instance: Instance,
+        causation_id: str,
+        correlation_id: str | None = None,
+    ) -> None:
+        """Enqueue an ``instance.provisioned`` outbox row inside the caller's session.
+
+        CLAUDE.md §6.1.1: this is the ONLY place an ``instance.*`` event is
+        emitted via the outbox. Constructs the payload from the instance row,
+        mints a fresh envelope via :meth:`EventEnvelope.build`, and delegates
+        the INSERT to :class:`OutboxRepo` — which uses ``ON CONFLICT DO NOTHING``
+        as a backstop (D-02). Does NOT commit — caller owns the transaction (D-01).
+
+        Args:
+            session: The open async session (the same ready-transition session).
+            instance: The Instance ORM object in ``ready`` state. All fields
+                needed for the payload must already be set (``hostname``,
+                ``url``, ``admin_email``, ``snapshot_version``, ``ready_at``).
+            causation_id: The ULID of the triggering ``subscription.activated``
+                envelope — set from ``task.source_event_id`` (D-09).
+            correlation_id: Optional upstream trace/request id (passthrough).
+        """
+        payload = InstanceProvisionedPayload(
+            instance_id=instance.id,
+            subscription_id=instance.subscription_id,
+            customer_id=instance.customer_id,
+            hostname=instance.hostname,
+            url=instance.url,
+            admin_email=instance.admin_email,
+            snapshot_version=instance.snapshot_version,
+            provisioned_at=instance.ready_at,
+        )
+        envelope = EventEnvelope.build(
+            type="instance.provisioned",
+            version=1,
+            payload=payload,
+            causation_id=causation_id,
+            correlation_id=correlation_id,
+        )
+        outbox = OutboxRepo(session)
+        await outbox.enqueue(envelope)
+        log.info(
+            "instance.provisioned enqueued to outbox",
+            instance_id=str(instance.id),
+            envelope_id=envelope.id,
+        )

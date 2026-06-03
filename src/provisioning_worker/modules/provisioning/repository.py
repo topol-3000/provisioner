@@ -16,12 +16,16 @@ canonical home) rather than ``modules/provisioning/spec.py`` — the dependency
 arrow always points inward.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from provisioning_worker.events.envelope import stream_for_envelope_type
 from provisioning_worker.modules.provisioning.models import (
     EnforcementSnapshot,
+    EventOutbox,
     Instance,
     InstanceStatus,
     ProvisioningTask,
@@ -30,14 +34,15 @@ from provisioning_worker.modules.provisioning.models import (
 from provisioning_worker.shared.errors import DeploymentFailed, InstanceNotFound
 
 if TYPE_CHECKING:
-    from datetime import datetime
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from provisioning_worker.events.envelope import EventEnvelope
     from provisioning_worker.ports.deployment_adapter import InstanceSpec
 
 __all__ = [
+    "OutboxRepo",
     "get_instance_by_id",
     "get_instance_by_subscription_id",
     "get_task_by_id",
@@ -325,3 +330,41 @@ async def update_snapshot_version(
     instance = result.scalar_one_or_none()
     if instance is not None:
         instance.snapshot_version = version
+
+
+class OutboxRepo:
+    """Persistence for ``provisioning.event_outbox`` — transactional outbox writer.
+
+    Constructed with an open ``AsyncSession``; the caller owns the transaction
+    boundary and commits. Used by :meth:`ProvisioningService.emit_instance_provisioned`
+    inside the ready-transition ``session_scope()`` (D-07).
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def enqueue(self, envelope: EventEnvelope) -> None:
+        """INSERT one row into ``provisioning.event_outbox`` for ``envelope``.
+
+        Idempotent on ``envelope.id`` via ``ON CONFLICT DO NOTHING`` on
+        ``envelope_id`` — a second enqueue with the same ULID is a no-op
+        (D-02). Does NOT commit — caller owns the transaction.
+
+        Args:
+            envelope: The :class:`EventEnvelope` to enqueue. ``envelope.id``
+                (ULID) is the dedup key; ``envelope.type`` drives stream
+                selection via :func:`stream_for_envelope_type`.
+        """
+        stmt = (
+            pg_insert(EventOutbox)
+            .values(
+                envelope_type=envelope.type,
+                envelope_id=envelope.id,
+                stream=stream_for_envelope_type(envelope.type),
+                payload=envelope.model_dump(mode="json"),  # JSON-native types for JSONB
+                created_at=datetime.now(tz=UTC),
+            )
+            .on_conflict_do_nothing(index_elements=["envelope_id"])
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()

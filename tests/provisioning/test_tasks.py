@@ -196,6 +196,7 @@ def _make_unit_mock_session(instance: Instance, task: ProvisioningTask):
     """Build a mock AsyncSession that returns the given instance and task from queries."""
     session = MagicMock()
     session.commit = AsyncMock()
+    session.flush = AsyncMock()
     session.rollback = AsyncMock()
     session.add = MagicMock()
 
@@ -243,6 +244,7 @@ async def test_create_path_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     # We mock session_scope to return an in-memory mock session.
     session = MagicMock()
     session.commit = AsyncMock()
+    session.flush = AsyncMock()
     session.rollback = AsyncMock()
     session.add = MagicMock()
 
@@ -301,6 +303,7 @@ async def test_credentials_sent_once(
 
     session = MagicMock()
     session.commit = AsyncMock()
+    session.flush = AsyncMock()
     session.rollback = AsyncMock()
     session.add = MagicMock()
     call_count = 0
@@ -352,6 +355,7 @@ async def test_consumer_does_not_crash_on_adapter_failure(
 
     session = MagicMock()
     session.commit = AsyncMock()
+    session.flush = AsyncMock()
     session.rollback = AsyncMock()
     session.add = MagicMock()
     call_count = 0

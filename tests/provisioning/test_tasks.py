@@ -761,3 +761,49 @@ async def test_no_credential_resend_on_retry(
     assert spy_console_transport.send_credentials.await_count == 1, (
         "send_credentials must be called exactly once even on re-run when ready_at is set"
     )
+
+
+# ---------------------------------------------------------------------------
+# EVT-02 test stubs — fulfilled by Plan 02
+# ---------------------------------------------------------------------------
+
+
+async def test_emit_instance_provisioned_fields() -> None:
+    """EVT-02: envelope enqueued by create_instance_task has correct causation_id and payload fields.
+
+    After create_instance_task completes (in_memory_broker), OutboxRepo.enqueue
+    must have been called with an envelope where:
+    - causation_id == the source_event_id from the task row
+    - hostname == f"{spec.slug}.{settings.instance_domain_suffix}"
+    - url == f"https://{hostname}"
+    - snapshot_version is an int (>= 1)
+    - no admin_password field in the payload (D-09)
+    """
+    pytest.skip("EVT-02 — emit_instance_provisioned not implemented yet (Plan 02)")
+
+
+async def test_hostname_derivation() -> None:
+    """EVT-02: instance.url and instance.hostname on the committed DB row match the FQDN pattern.
+
+    After create_instance_task completes:
+    - instance.hostname == f"{slug}.{domain_suffix}"
+    - instance.url == f"https://{slug}.{domain_suffix}"
+
+    This verifies the D-08 fix: the Phase-3 placeholder url=f"https://{spec.slug}"
+    is replaced with the full FQDN using settings.instance_domain_suffix.
+    """
+    pytest.skip("EVT-02 — hostname derivation fix (D-08) not implemented yet (Plan 02)")
+
+
+async def test_no_duplicate_emit_on_retry() -> None:
+    """EVT-01: emit guarded by is_first_ready — no duplicate outbox row on retry.
+
+    Run convergence once to ready (is_first_ready=True → emit called).
+    Simulate a second call with ready_at already set (is_first_ready=False).
+    OutboxRepo.enqueue must have been called exactly once total across both runs.
+
+    This tests the D-02 / Pitfall 2 guard: emit is inside `if is_first_ready:`
+    so a task retry never double-enqueues despite ON CONFLICT DO NOTHING being
+    defense-in-depth (not primary mechanism).
+    """
+    pytest.skip("EVT-01 — is_first_ready emit guard not implemented yet (Plan 02)")

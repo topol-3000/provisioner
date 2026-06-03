@@ -119,11 +119,14 @@ class ProvisioningService:
         entitlement = self._entitlement_resolver.resolve(payload, settings)
         spec = build_instance_spec(payload, settings, entitlement)
 
-        # Pre-generate the instance UUID so it is available immediately for
-        # the FK in ProvisioningTask. SQLAlchemy's column default (uuid7) fires
-        # at flush time, not at object construction — so instance.id would be
-        # None if we relied on the default before the first flush.
+        # Pre-generate the instance and task UUIDs so they are available
+        # immediately — both for the FK in ProvisioningTask and for the
+        # post-commit Taskiq enqueue in the handler, which reads ``task.id``
+        # before the session is flushed. SQLAlchemy's column default (uuid7)
+        # fires at flush time, not at object construction — so relying on it
+        # would yield ``None`` here (enqueued as the string ``"None"``).
         instance_id = uuid7()
+        task_id = uuid7()
         instance = Instance(
             id=instance_id,
             subscription_id=payload.subscription_id,
@@ -135,6 +138,7 @@ class ProvisioningService:
             version=1,
         )
         task = ProvisioningTask(
+            id=task_id,
             instance_id=instance_id,
             task_type=TaskType.create,
             status=ProvisioningTaskStatus.pending,

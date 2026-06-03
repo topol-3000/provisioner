@@ -27,6 +27,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.dialects.postgresql import JSONB
@@ -36,6 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 __all__ = [
     "Base",
     "EnforcementSnapshot",
+    "EventOutbox",
     "Instance",
     "InstanceStatus",
     "ProcessedEvent",
@@ -269,3 +271,38 @@ class EnforcementSnapshot(Base):
     seat_cap: Mapped[int] = mapped_column(Integer, nullable=False)
     resource_caps: Mapped[dict] = mapped_column(JSONB, nullable=False)
     feature_flags: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+
+class EventOutbox(Base):
+    """Transactional outbox — one row per produced domain event.
+
+    Written inside the same ``session_scope()`` transaction as the state change
+    that triggers it; the relay polls ``sent_at IS NULL`` rows and publishes
+    them to ``events.instance`` via ``XADD``. Exactly mirrors platform-api's
+    ``billing.event_outbox`` column set (D-02, D-05).
+
+    ``UNIQUE(envelope_id)`` is a backstop against pathological double-enqueue;
+    the primary exactly-once mechanism is the ``ready_at IS NULL`` first-ready
+    guard in ``tasks.py`` (D-01). Consumer-side dedupe on ``envelope.id`` is the
+    downstream safety net.
+    """
+
+    __tablename__ = "event_outbox"
+    __table_args__: ClassVar[tuple] = (
+        UniqueConstraint("envelope_id", name="uq_event_outbox_envelope_id"),
+        {"schema": _SCHEMA},
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid7)
+    envelope_type: Mapped[str] = mapped_column(Text, nullable=False)
+    envelope_id: Mapped[str] = mapped_column(Text, nullable=False)
+    stream: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )

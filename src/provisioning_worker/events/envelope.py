@@ -1,21 +1,22 @@
-"""Domain-event envelope — generic wire shape for every consumed event.
+"""Domain-event envelope — generic wire shape for every event (consumed + produced).
 
 Re-implemented per repo (no shared ``platform-contracts`` package —
-CLAUDE.md §6.2). This module is the consume-side source of truth for the
-envelope contract (see ``docs/events.md §Envelope``).
+CLAUDE.md §6.2). This module is the source of truth for the envelope contract
+(see ``docs/events.md §Envelope``).
 
 The envelope is a Pydantic v2 generic model so each consume site fixes the
 payload type at the call site
 (``EventEnvelope[SubscriptionActivatedPayload].model_validate(...)``) and
-gets field-level validation for free. Unlike platform-api's producer-side
-envelope, this re-implementation drops the ``build()`` classmethod — minting
-envelopes is a producer concern that lands in Phase 4+ (D-03).
+gets field-level validation for free. Phase 4 restores the producer-side
+``build()`` classmethod (Phase-2 D-03 deliberately dropped it; Phase-4 D-02
+restores it for the outbox → relay emit path).
 """
 
-from datetime import datetime  # noqa: TC003 — runtime-typed Pydantic field
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from ulid import ULID
 
 __all__ = ["EventEnvelope", "stream_for_envelope_type"]
 
@@ -58,6 +59,48 @@ class EventEnvelope[P: BaseModel](BaseModel):
     correlation_id: str | None = None
     causation_id: str | None = None
     payload: P
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        type: str,
+        version: int,
+        payload: P,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> EventEnvelope[P]:
+        """Mint a new envelope with a fresh ULID and the provisioning-worker producer.
+
+        This is the only sanctioned way to construct an envelope from producer
+        code — direct ``EventEnvelope(...)`` calls risk forgetting the producer
+        literal or the ULID id.
+
+        Args:
+            type: Dotted event type matching ``docs/events.md``,
+                e.g. ``"instance.provisioned"``.
+            version: Payload schema version (``>= 1``).
+            payload: The typed payload instance.
+            correlation_id: Upstream request id (optional).
+            causation_id: Preceding event id when this event is part of a chain;
+                ``None`` for root events. Set to the triggering
+                ``subscription.*`` envelope id (D-09).
+
+        Returns:
+            A frozen :class:`EventEnvelope` with ``id`` = new 26-char ULID,
+            ``occurred_at`` = ``datetime.now(tz=UTC)``,
+            ``producer`` = ``"provisioning-worker"``.
+        """
+        return cls(
+            id=str(ULID()),
+            type=type,
+            version=version,
+            occurred_at=datetime.now(tz=UTC),
+            producer="provisioning-worker",
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload=payload,
+        )
 
 
 def stream_for_envelope_type(envelope_type: str) -> str:
